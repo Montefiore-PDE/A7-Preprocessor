@@ -1,14 +1,8 @@
-import FileProcessor
-import FolderManager
+from FileProcessor import FileProcessor
+from FolderManager import FolderManager
 from TypesDefinition import CheckMode, ProcessType
 
 if __name__ == '__main__':
-    # folder_manager = FolderManager('Zimmer', 'cleanup')
-    # # pre_checker = FileProcessor(folder_manager)
-    # pre_checker = FileProcessor(folder_manager, check_mode = CheckMode.MFN_RF)
-    # pre_checker.set_scope()
-    # pre_checker.standardize_all_and_stack()
-
     print("Initiating .......")
     print("=======================================================")
     print("Let's set up the folders first")
@@ -23,8 +17,9 @@ if __name__ == '__main__':
     print("=========================================================")
     
 
-    # folder_manager = FolderManager('Fisher Scientific Healthcare', 
-    #                                'PP-LA-508')
+    # folder_manager = FolderManager('Bard Medical Division', 
+    #                                'L0000000000052')
+    
     # folder_manager.create_folders()
     
 

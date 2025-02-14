@@ -561,7 +561,6 @@ class FileProcessor:
                                                    vendor_map_df['RepresentativeText'])}
         
         return vendor_map.get(vendor, ['TBD', 'TBD'])
-
     def scoping(self):
         """
         Define the searching space for downstream contract line comparesions.
@@ -590,6 +589,7 @@ class FileProcessor:
                                        infor_std['VN'].isin(mfn_to_check) |
                                        infor_std['VN'].isin(mfn_rf_to_check)) & 
                                        (infor_std['Active Rank'] == '1')][infor_cols_to_take].copy()
+        
         infor_interferring.loc[:, 'VendorName'] = infor_interferring['Vendor'].apply(lambda x: self.vendor_map(x)[0])
         infor_interferring.loc[:, 'Supplier'] = infor_interferring['Vendor'].apply(lambda x: self.vendor_map(x)[-1])
         infor_interferring.loc[:, 'ManufacturerName'] = infor_interferring['Manufacturer'].apply(lambda x: self.manufacturer_map(x))
@@ -789,15 +789,15 @@ class FileProcessor:
         dup_found_m.loc[:, 'Description Similarity'] = dup_found_m['Description Similarity'].fillna(1)
         dup_found_m.loc[:, 'Drop'] = ''
         dup_found_m.sort_values(by = ['Description Similarity'], inplace = True)
-        dup_found_m.to_excel(os.path.join(self.temp_file_path, 
-                                          f'dup_search_to_review_{self.datesig}.xlsx'),
+        dup_found_m.to_excel(os.path.join(self.output_file_path, 
+                                          f'dup_search_review_{self.datesig}.xlsx'),
                                           index = False)
-        print(f"Initial search for duplication items completed, results are saved as 'dup_search_to_review_{self.datesig}.xlsx' in the temp folder. Please review and mark false positive matches under columns 'Drop' with 'x' and rename the reviewed file to 'dup_search_reviewed.xlsx")
+        print(f"Initial search for duplication items completed, results are saved as 'dup_search_review_{self.datesig}.xlsx' in the temp folder. Please review and mark false positive matches under columns 'Drop' with 'x' and rename the reviewed file to 'dup_search_reviewed.xlsx")
         
         duplication_review_completed = "no"
         duplication_review_completed = input("Have we reviewed the duplication search results and rename the file? (yes/no): ")
         if duplication_review_completed.lower() == "yes" or duplication_review_completed.lower() == "y":
-            dup_found_reviewed = pd.read_excel(os.path.join(self.temp_file_path, 
+            dup_found_reviewed = pd.read_excel(os.path.join(self.output_file_path, 
                                                             'dup_search_reviewed.xlsx'),
                                                              dtype = str)
             dup_found_clean = dup_found_reviewed[dup_found_reviewed['Drop'].fillna('') == ''].copy()
@@ -927,7 +927,7 @@ class FileProcessor:
                   'Description_x', 'UnitCost_x', 'UOM', 'QOE_x', 'seq',
                   'Effective Date', 'Expiration Date', 'MFN RF', 'Description_y', 'Description Similarity',
                   'MFN_y', 'Item', 'ItemType', 'UOMConversion', 'ValidForBuying',
-                  'AllValidBuyUOMandCF', 'IM_check']].copy()
+                  'AllValidBuyUOMandCF_y', 'IM_check']].copy()
 
         im_label_simple = im_label_simple.drop_duplicates(subset = ['seq', 'Item'])
         im_label_simple.loc[:, 'Numbers of Item Matched'] = im_label_simple.groupby(['seq'])['Item'].transform('count')
