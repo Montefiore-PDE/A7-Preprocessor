@@ -6,7 +6,7 @@ class FolderManager:
                  contract: str):
         self.current_directory = os.getcwd()
         self.default_directory = os.path.join(self.current_directory, 'Preprocessor_Data')
-        self.input_shared_folder = os.path.join(self.default_directory, 'SHARED_DATA')
+        self.input_shared_folder = os.path.join(self.current_directory, 'SHARED_DATA')
         
         self.base_directory = os.path.join(self.default_directory, f'{manufacturer}')
         self.input_ccx_folder = os.path.join(self.base_directory,'ccx')
