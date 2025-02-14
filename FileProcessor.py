@@ -915,7 +915,7 @@ class FileProcessor:
         valid_buyuom.loc[:, 'AllValidBuyUOMandCF'] = valid_buyuom['UOM'] + '*' + valid_buyuom['UOMConversion'].astype(int).astype(str)
         all_buyuom = valid_buyuom.groupby(['Item'])['AllValidBuyUOMandCF'].apply(lambda x: ','.join(x)).to_frame().reset_index()
         # merge to tp_im
-        im_label = tp_im.merge(valid_buyUOM, on = ['Item', 'UOM'], how = 'left').\
+        im_label = tp_im.merge(valid_buyuom, on = ['Item', 'UOM'], how = 'left').\
                          merge(all_buyuom, on = ['Item'], how = 'left')
         im_label.loc[:, 'IM_check'] = im_label['ValidForBuying'].apply(lambda x: 'Failed' if pd.isnull(x) else 'Passed')
         im_label.loc[:, 'IM_check'] = im_label.apply(lambda x: 'Failed' 
