@@ -30,8 +30,8 @@ if __name__ == '__main__':
                         '5': ('itemmast_search_and_compare', 'v1.0', ProcessType.itemmast_search_and_compare),
                         '6': ('replacement_contract_pair_check', 'v1.0', ProcessType.replacement_contract_pair_check),
                         '7': ('ccx_dup_search_and_itemmast_match_and_replacement_check', 'v1.0', ProcessType.ccx_dup_search_and_itemmast_match),
-                        '8': ('residue_distribution', 'TBI', ProcessType.residue_distribution)
-                        }
+                        '8': ('residue_distribution', 'TBI', ProcessType.residue_distribution),
+                        '0': ('full_process', 'v1.0', ProcessType.full_process)}
     
     for key, vals in process_type_map.items():
         print(f"Process {key}: {vals[0]}")

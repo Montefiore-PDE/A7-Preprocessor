@@ -9,6 +9,7 @@ class ProcessType:
     replacement_contract_pair_check = "replacement_contractS_pair_check"
     dissolve = "dissolve"
     post_check = "post_check"
+    full_process = "full_process"
 
 class CheckMode:
     MFN = "MFN"
@@ -19,3 +20,8 @@ class StandardizeTarget:
     IMPORT = "Import"
     CCX = "CCX"
     TP = "TP" # to pre-process
+
+class Status:
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    IN_PROGRESS = "IN PROGRESS"

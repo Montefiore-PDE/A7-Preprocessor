@@ -5,7 +5,7 @@ from sentence_transformers import SentenceTransformer
 from scipy.spatial import distance
 from datetime import datetime
 from FolderManager import FolderManager
-from TypesDefinition import ProcessType, CheckMode, StandardizeTarget
+from TypesDefinition import ProcessType, CheckMode, StandardizeTarget, Status
 import warnings
 
 # no show certian warning
@@ -125,6 +125,20 @@ class FileProcessor:
             self.set_scope(search_term = self.manufacturer)
             self.standardize_all_and_stack()
             self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
+        elif process_type == ProcessType.full_process:
+            print('Initiating full process .......')
+            s_pre_check = self.pre_check(check_mode = self.check_mode)
+            if s_pre_check == Status.FAILED: return None
+            s_scoping = self.scoping()
+            if s_scoping == Status.FAILED: return None
+            self.set_scope(search_term = self.manufacturer)
+            self.standardize_all_and_stack()
+            self.set_model()
+            self.dup_search_and_compare(check_mode = self.check_mode,
+                                        base_set = 'TP',
+                                        search_set_input = 'CCX')
+            self.itemmast_search_and_compare(check_mode = self.check_mode)
+            self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
         else:
             print(f'Invalid process type: {process_type}')
     
@@ -142,10 +156,10 @@ class FileProcessor:
         print(f'reading input files from {self.tp_file_path}')
         if not os.path.exists(self.tp_file_path):
             print('folder not found')
-            return None
+            return Status.FAILED
         if not os.listdir(self.tp_file_path):
             print('no files were found')
-            return None
+            return Status.FAILED
         
         dfs = []
         checker_null_value, checker_dup_value, checker_unknwon_uom, checker_EA_QOE = False, False, False, False
@@ -158,7 +172,7 @@ class FileProcessor:
                 df_all = pd.read_excel(file_path, sheet_name = None, dtype = str)
             except PermissionError as e:
                 print(f'error: {file} is open, please close and try again.')
-                break
+                return Status.FAILED
             for tab, df in df_all.items():
                 try:
                     df = df[['Mfg Part Num', 
@@ -181,7 +195,7 @@ class FileProcessor:
                                             'Expiration Date']))
                 except ValueError as e:
                     print(f'error: {file}_{tab} does not have the correct columns, please check and use template and try again.')
-                    break
+                    return Status.FAILED
                 df.loc[:, 'Contract Number'] = tab.strip()
                 df.loc[:, 'File Name'] = file
                 dfs.append(df)
@@ -289,11 +303,12 @@ class FileProcessor:
                 if file.endswith('.xlsx'):
                     os.rename(os.path.join(self.tp_file_path, file), 
                               os.path.join(self.processed_file_path, f'archived_{self.datesig}_{file}'))
-            print("old input file(s) are moved from 'to_process' to 'processed' folder")
+            print("old input file(s) are archived from 'to_process' to 'processed' folder")
             all_items.to_excel(os.path.join(self.tp_file_path, 
                               f'TP_INPUT_prechecked.xlsx'), 
                               index = False)
-            print("all items to pre-process are saved as 'TP_INPUT_prechcked....xlsx' in the 'to_process' folder for further processing")
+            print("all items to pre-process are saved as 'TP_INPUT_prechcked.xlsx' in the 'to_process' folder for further processing")
+            return Status.SUCCESS
         else:
             # output the pre_checked df_combined to temp folder, directly mark problems on the combined file
             df_combined.loc[rows_with_nulls_index, 'Missing Value'] = 'Check missing value'
@@ -310,14 +325,14 @@ class FileProcessor:
             for file in os.listdir(self.tp_file_path):
                 if file.endswith('.xlsx'):
                     os.rename(os.path.join(self.tp_file_path, file), 
-                              os.path.join(self.processed_file_path, f'archived_{self.datesig}_{file}'))
+                              os.path.join(self.processed_file_path, file))
             print("old input file(s) are moved from 'to_process' to 'processed' folder")
-            df_combined.to_excel(os.path.join(self.tp_file_path,
-                                              f'TP_INPUT_prechecked.xlsx'),
+            df_combined.to_excel(os.path.join(self.temp_file_path,
+                                              f'TP_INPUT_prechecked_with_error.xlsx'),
                                               index = False)
-            print("pre-check failed, please carefully review console message and check the temp folder report for more details")
+            print("pre-check failed, please carefully review console message and check the temp folder report for more details, once problems fixed, try again.")
         
-        return None
+        return Status.FAILED
     
     def standardize_helper(self, 
                            std_df: pd.DataFrame):
@@ -398,12 +413,12 @@ class FileProcessor:
             file_name = self.infor_contract_line_file_name
             if not os.path.exists(file_path):
                 print(f"Folder '{file_path}' does not exist, please check the folder path")
-                return None
+                return Status.FAILED
             try:
                 infor_df = pd.read_csv(os.path.join(file_path, file_name), dtype = str)
             except FileNotFoundError as e:
                 print(f"File '{file_name}' does not exist, check infor contract line download and try again")
-                return None
+                return Status.FAILED
             for col in ['Vendor','Manufacturer', 'ManufacturerNumber', 'VendorItem']:
                 infor_df.loc[:, col] = infor_df[col].fillna('unknown')
             for col in ['Contract Import', 'File Name']:
@@ -430,12 +445,12 @@ class FileProcessor:
             file_name = self.infor_contract_line_import_file_name
             if not os.path.exists(file_path):
                 print(f"Folder '{file_path}' does not exist, please check the folder path")
-                return None
+                return Status.FAILED
             try:
                 import_df = pd.read_csv(os.path.join(file_path, file_name), dtype = str)
             except FileNotFoundError as e:
                 print(f"File '{file_name}' does not exist, check infor contract line import download and try again")
-                return None
+                return Status.FAILED
             import_df = self.split_manufacturerinformation(import_df)
             for col in ['ContractImport.Vendor', 'VendorItem']:
                 import_df.loc[:, col] = import_df[col].fillna('unknown')
@@ -464,7 +479,7 @@ class FileProcessor:
             ccx_dfs = []
             if not os.path.exists(file_path):
                 print(f"Folder '{file_path}' does not exist, please check the folder path")
-                return None
+                return Status.FAILED
             for file in os.listdir(file_path):
                 if not file.endswith('.xlsx'):
                     print(f'ignoring {file} because it is not a .xlsx file')
@@ -475,7 +490,7 @@ class FileProcessor:
                     ccx_dfs.append(ccx_df)
                 except FileNotFoundError as e:
                     print(f"File '{file}' does not exist, check CCX contract download and try again")
-                    return None
+                    return Status.FAILED
             ccx_df = pd.concat(ccx_dfs, ignore_index = True)
             for cols in ['Contract', 'ItemType', 'OnHold', 'ActiveLine', 
                          'ContractLineState', 'Contract.ContractStatus','ContractImport',
@@ -503,12 +518,12 @@ class FileProcessor:
             file_name = f"TP_INPUT_prechecked.xlsx"
             if not os.path.exists(file_path):
                 print(f"Folder '{file_path}' does not exist, please check the folder path")
-                return None
+                return Status.FAILED
             try:
                 tp_df = pd.read_excel(os.path.join(file_path, file_name), dtype = str)
             except FileNotFoundError as e:
                 print(f"File '{file_name}' does not exist, check the output from pre_check process and try again")
-                return None
+                return Status.FAILED
             tp_df.loc[:, 'Vendor'] = vendor_name
             tp_df.loc[:, 'Manufacturer'] = self.manufacturer
             tp_df.loc[:, 'ContractLine'] = tp_df.groupby(['Contract Number']).cumcount() + 1
@@ -533,8 +548,8 @@ class FileProcessor:
 
         else:
             print("standardize target not recognized, please check the target file and try again")
-    
-        return None
+        
+        return Status.FAILED
     
     def manufacturer_map(self, mfn: str):
         """
@@ -561,6 +576,7 @@ class FileProcessor:
                                                    vendor_map_df['RepresentativeText'])}
         
         return vendor_map.get(vendor, ['TBD', 'TBD'])
+    
     def scoping(self):
         """
         Define the searching space for downstream contract line comparesions.
@@ -600,8 +616,18 @@ class FileProcessor:
                                          f'scoping_manual_review_{self.datesig}.xlsx'),
                                          index = False)
         print(f"scoping file is saved as 'scoping_manual_review_{self.datesig}.xlsx' in the output folder for manual review. Once reviewed, change the file name to 'scoping_manual_reviewed.xlsx'")
-
-        return None
+        scoping_reviewed = input("Have you reviewed the scoping file and identified the contract we want to include in subsequent steps? (yes/no)").lower()
+        if scoping_reviewed == 'yes' or scoping_reviewed == 'y':
+            try:
+                scoping_df = pd.read_excel(os.path.join(self.output_file_path, 
+                                                        f'scoping_manual_reviewed.xlsx'),
+                                           dtype = str)
+            except FileNotFoundError as e:
+                print("file not found, please make sure the file is saved under name 'scoping_manual_reviewed.xlsx' and you have listed the contract needed in 'Sheet2' under column 'Contract Number_y'." )
+                return Status.FAILED
+            return Status.SUCCESS
+        
+        return Status.FAILED
     
     def set_scope(self, search_term: str = None):
         """Set searching space by combining
@@ -651,14 +677,15 @@ class FileProcessor:
             print(i, contract)
         
         ccx_data_ready = "no"
-        ccx_data_ready = input("we have all the contracts we need? (yes/no)")
+        ccx_data_ready = input(f"we have all the contracts we need under the designated folder {self.ccx_file_path}? (yes/no)")
         # this is important -- after running this function, the object sets its searching space
         if ccx_data_ready.lower() == 'yes' or ccx_data_ready.lower() == 'y':
             self.search_scope = all_contracts_to_look
+            return Status.SUCCESS
         else:
             print(f"please download all suggested contracts from CCX and put them under path {self.ccx_file_path}, then try again.")
     
-        return None
+        return Status.FAILED
     
     def standardize_all_and_stack(self):
         """Standardize all four major sources of input tables
@@ -675,7 +702,7 @@ class FileProcessor:
         
         if self.search_scope is None:
             print("searching scope not set, please run set_scope() function first and try again")
-            return None
+            return Status.FAILED
         
         print("current searching scope set as: ", self.search_scope)
 
@@ -686,15 +713,15 @@ class FileProcessor:
 
         stacked_std = pd.concat([ccx_std, infor_std, import_std, tp_std], ignore_index = True)
         self.stacked_std = stacked_std
-        print(f"file sources are standardized and stacked togather, a hard copy also created and stored under {self.temp_file_path}.")
+        print(f"file sources are standardized and stacked togather, a hard copy will be created and stored under {self.temp_file_path}.")
         stacked_std.to_excel(os.path.join(self.temp_file_path, 
                                           f'stacked_std_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'),
                                           index = False)
-        return None
+        return Status.SUCCESS
     
     def set_model(self, model_name:str = 'all-MiniLM-L6-v2'):
         self.model = SentenceTransformer(model_name)
-        return None
+        return Status.SUCCESS
     
     def calc_similarity(self, 
                         desc1: str, 
@@ -711,7 +738,7 @@ class FileProcessor:
         and create a new column to store the results"""
         if len(to_emb) == 0:
             print("there is no similarity to compute")
-            return None
+            return Status.FAILED
         sims = []
         to_emb.loc[:, 'ref'] = [str(i) for i in range(len(to_emb))]
         total_records_to_process = len(to_emb)
@@ -755,11 +782,11 @@ class FileProcessor:
             dup_found = left_df.merge(right_df, on = ['MFN'])
         else:
             print("Invalid check mode. Please use CheckMode.MFN_RF or CheckMode.MFN.")
-            return None
+            return Status.FAILED
         
         if len(dup_found) == 0:
             print("no duplication found in the search set. All good now.")
-            return None
+            return Status.FAILED
        
         dup_found.loc[:, 'Same QOE'] = dup_found['QOE_x'] == dup_found['QOE_y']
         dup_found.loc[:, 'Same UOM'] = dup_found['UOM_x'] == dup_found['UOM_y']
@@ -868,12 +895,12 @@ class FileProcessor:
                     v.to_excel(writer, sheet_name = k, index = False)
                 dup_found_clean.to_excel(writer, sheet_name = 'all_dup_raw', index = False)
             print(f"duplication search completed, report will be saved to {self.output_file_path}")
+            return Status.SUCCESS
 
         else:
             print("Take your time and once the review is done, rerun the process and try again")
-            return None
 
-        return None
+        return Status.FAILED
     
     def itemmast_search_and_compare(self,
                                     check_mode: CheckMode = CheckMode.MFN_RF):
@@ -898,7 +925,7 @@ class FileProcessor:
         print(f'found {tp_im.shape[0]} of potential item master item.')
         if len(tp_im) == 0:
             print("No Item master item hit, nothing need to be done.")
-            return None
+            return Status.SUCCESS
         tp_im.loc[:, 'Description Similarity'] = tp_im.apply(lambda x: 
                                                              self.calc_similarity(x['Description_x'], 
                                                                                   x['Description_y']),
@@ -936,10 +963,10 @@ class FileProcessor:
                                                 index = False)
         print('item master matching completed successfully, results are saved to output folder.')
         
-        return None
+        return Status.SUCCESS
     
     def replacement_contract_pair_check(self,
-                                        check_mode: CheckMode = CheckMode.MFN):
+                                        check_mode: CheckMode = CheckMode.MFN_RF):
         """compare two contracts: TP - new, replacement ccx - old contract to be replaced to identify
         1. items only lives on old contract
         2. items only lives on old contract and marked as itemmast on Infor"""
@@ -954,7 +981,7 @@ class FileProcessor:
         on_infor_flag = True
         if len(replacement_ccx_df) == 0:
             print(f"Contract {replaced_contract} not found in CCX, please check the contract number and try again.")
-            return None
+            return Status.SUCCESS
         if len(replacement_infor_df) == 0:
             print(f"Contract {replaced_contract} not found in Infor, please check the contract number and try again.")
             on_infor_flag = False
@@ -966,7 +993,7 @@ class FileProcessor:
         replaced_leftover = replaced_contract_mfn.difference(tp_contract_mfn)
         if len(replaced_leftover) == 0:
             print("full coverage using replacement contract, no leftover items found.")
-            return None
+            return Status.SUCCESS
         replacement_leftover_df = replacement_ccx_df[replacement_cols_to_take].copy()
         replacement_leftover_df = replacement_leftover_df[replacement_leftover_df[check_mode].isin(replaced_leftover)].copy()
         replacement_leftover_df.loc[:, 'On Replacement Contract'] = 'No'
@@ -979,14 +1006,14 @@ class FileProcessor:
 
         if len(replacement_leftover_df) == 0:
             print("full coverage using replacement contract, no leftover items found.")
-            return None
+            return Status.SUCCESS
         else:
             replacement_leftover_df.sort_values(by = ['ItemType'], ascending = [True], inplace = True)
             replacement_leftover_df.to_excel(os.path.join(self.output_file_path,
                                                           f'replacement_leftover_{replaced_contract}_{self.datesig}.xlsx'),
                                                           index = False)
             print(f"replacement contract pair check completed, results are saved to output folder.")
-        return None
+        return Status.SUCCESS
     
     def make_ccx_upload_file(self):
         print('make_ccx_upload_file')
