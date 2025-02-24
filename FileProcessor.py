@@ -4,14 +4,18 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from scipy.spatial import distance
 from datetime import datetime
+from colorama import init, Fore, Style
 from FolderManager import FolderManager
 from TypesDefinition import ProcessType, CheckMode, StandardizeTarget, Status
+from ReportFurnishing import ReportFurnishing
 import warnings
+
+# turn on colorama
+init(autoreset=True)
 
 # no show certian warning
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=DeprecationWarning)
-
 
 # set pandas dispaly options
 pd.set_option('display.max_columns', 20)
@@ -19,9 +23,13 @@ pd.set_option('display.max_rows', 30)
 
 class FileProcessor:
 
+    _infor_std_cache = None
+    _import_std_cache = None
+
     def __init__(self, 
                 folder_manager: FolderManager,
-                check_mode: CheckMode = CheckMode.MFN_RF):
+                check_mode: CheckMode = CheckMode.MFN_RF,
+                data_caching = True):
         self.folder_manager = folder_manager
         self.check_mode = check_mode
         self.datesig = datetime.today().strftime('%Y%m%d')
@@ -43,11 +51,32 @@ class FileProcessor:
         self.search_scope = []
         self.tp_std = None
         self.ccx_std = None
-        self.infor_std = None
-        self.import_std = None
         self.stacked_std = None
         self.model = None
 
+        if data_caching == False:
+            self.infor_std = None
+            self.import_std = None
+        else:
+            if FileProcessor._infor_std_cache is None:
+                FileProcessor._infor_std_cache = self.standardize(StandardizeTarget.INFOR)
+            self.infor_std = FileProcessor._infor_std_cache
+
+            if FileProcessor._import_std_cache is None:
+                FileProcessor._import_std_cache = self.standardize(StandardizeTarget.IMPORT)
+            self.import_std = FileProcessor._import_std_cache
+
+
+    @classmethod
+    def reset_cache(cls):
+        cls._infor_std_cache = None
+        cls._import_std_cache = None
+
+    def set_check_mode(self):
+        check_mode = input("Please select the check mode for the pre-check process, key in 'MFN' or 'MFN RF': ")
+        self.check_mode = CheckMode.MFN if check_mode.upper() == 'MFN' else CheckMode.MFN_RF
+
+    
     def MFN_reformat(self, MFN: str):
         """
         Reformat manufacturer part number to a reduced version by 
@@ -74,6 +103,9 @@ class FileProcessor:
         # apply the translation to the provided UOM
         return uom_translation[UOM.upper().strip()] if UOM.upper().strip() in uom_translation else 'TBD'
     
+    
+    # this is the main logic loop for all different processes
+    # Ideally I should move all the process input here as parameters
     def process_files(self,
                       process_type: ProcessType
                       ):
@@ -111,7 +143,7 @@ class FileProcessor:
             self.set_model()
             self.itemmast_search_and_compare(check_mode = self.check_mode)
         elif process_type == ProcessType.ccx_dup_search_and_itemmast_match:
-            print('Initiating full pre-processor process .......')
+            print('Initiating pre-processor reporting process .......')
             self.set_scope(search_term = self.manufacturer)
             self.standardize_all_and_stack()
             self.set_model()
@@ -126,19 +158,57 @@ class FileProcessor:
             self.standardize_all_and_stack()
             self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
         elif process_type == ProcessType.full_process:
-            print('Initiating full process .......')
-            s_pre_check = self.pre_check(check_mode = self.check_mode)
-            if s_pre_check == Status.FAILED: return None
+            print('Initiating full process for preprocessor .......')
+            s_pre_check, s_scoping, s_set_scope, s_std = Status.FAILED, Status.FAILED, Status.FAILED, Status.FAILED
+            s_dup_run, s_im_match, s_replace = Status.FAILED, Status.FAILED, Status.FAILED
+            file_ready = input(f"please put your file to be processed to {self.tp_file_path}, ready to run (Y/N)?: ")
+            if file_ready.lower() == 'yes' or file_ready.lower() == 'y' or file_ready.lower() == 'ready': 
+                s_pre_check = self.pre_check(check_mode = self.check_mode)
+                while s_pre_check == Status.FAILED: 
+                    pre_check_retry = input('Exit or Retry? (E/R)')
+                    if pre_check_retry.lower() == 'r' or pre_check_retry.lower() == 'retry':
+                        s_pre_check = self.pre_check(check_mode = self.check_mode)
+                    else:
+                        print("Exit preprocessor, bye.")
+                        break
+            else:
+                print("Exit preprocessor, bye.")
+                return None
+            
             s_scoping = self.scoping()
-            if s_scoping == Status.FAILED: return None
-            self.set_scope(search_term = self.manufacturer)
-            self.standardize_all_and_stack()
+            while s_scoping == Status.FAILED: 
+                scoping_retry = input('Exit or Retry? (E/R)')
+                if scoping_retry.lower() == 'r' or scoping_retry.lower() == 'retry':
+                    s_scoping = self.scoping()
+                else:
+                    print("Exit preprocessor, bye.")
+                    break
+            
+            s_set_scope = self.set_scope()
+            if s_set_scope == Status.FAILED:
+                print("Exit preprocessor, bye.")
+                return None
+
+            s_std = self.standardize_all_and_stack()
+            if s_std == Status.FAILED:
+                print("Exit preprocessor, bye.")
+                return None
+            
             self.set_model()
-            self.dup_search_and_compare(check_mode = self.check_mode,
-                                        base_set = 'TP',
-                                        search_set_input = 'CCX')
-            self.itemmast_search_and_compare(check_mode = self.check_mode)
-            self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
+            s_dup_run = self.dup_search_and_compare(check_mode = self.check_mode,
+                                                    base_set = 'TP',
+                                                    search_set_input = 'CCX')
+            if s_dup_run == Status.FAILED:
+                print("Duplication search failed.")
+                
+            s_im_match = self.itemmast_search_and_compare(check_mode = self.check_mode)
+            if s_im_match == Status.FAILED:
+                print("Itemmast search failed.")
+            
+            s_replace = self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
+            if s_replace == Status.FAILED:
+                print("Replacement contract pair check failed.")
+
         else:
             print(f'Invalid process type: {process_type}')
     
@@ -201,6 +271,7 @@ class FileProcessor:
                 dfs.append(df)
        
         # formamtting
+        # now everything should already get combined into one dataframe
         df_combined = pd.concat(dfs, ignore_index = True)
         df_combined.loc[:, 'MFN RF'] = df_combined['Mfg Part Num'].apply(lambda x: self.MFN_reformat(x))
         for col in ['Mfg Part Num', 'Vendor Part Num', 'UOM', 'QOE', 'Description', 'Effective Date', 'Expiration Date']:
@@ -288,7 +359,7 @@ class FileProcessor:
         # output the pre_checked - deduped file
         # if all checks passsed
         if checker_null_value and checker_dup_value and checker_unknwon_uom and checker_EA_QOE:
-            print("all checkers PASSED, preparing the combined file ......")
+            print(f"Pre-checking {Fore.LIGHTGREEN_EX}***PASSED***{Style.RESET_ALL}, preparing the combined file ......")
             all_items = df_combined.drop_duplicates(subset = ['Mfg Part Num', 
                                                             'Contract Number',
                                                             'Contract Price',
@@ -298,16 +369,19 @@ class FileProcessor:
             for col in ['Effective Date', 'Expiration Date']:
                 all_items.loc[:, col] = pd.to_datetime(all_items[col], errors = 'coerce')
                 all_items.loc[:, col] = all_items[col].apply(lambda x: x.to_pydatetime().strftime('%Y-%m-%d') if not pd.isnull(x) else '1900-01-01')
+            
             # archive the old input file, shift the combined input file to be the new round of input
             for file in os.listdir(self.tp_file_path):
                 if file.endswith('.xlsx'):
-                    os.rename(os.path.join(self.tp_file_path, file), 
+                    os.replace(os.path.join(self.tp_file_path, file), 
                               os.path.join(self.processed_file_path, f'archived_{self.datesig}_{file}'))
-            print("old input file(s) are archived from 'to_process' to 'processed' folder")
+            print("Old input file(s) are archived under 'processed' folder")
+            
+            # output the pre_checked file and name it as TP_INPUT_prechecked.xlsx
             all_items.to_excel(os.path.join(self.tp_file_path, 
                               f'TP_INPUT_prechecked.xlsx'), 
                               index = False)
-            print("all items to pre-process are saved as 'TP_INPUT_prechcked.xlsx' in the 'to_process' folder for further processing")
+            print("All items to pre-process are saved as 'TP_INPUT_prechcked.xlsx' in the 'to_process' folder for further processing")
             return Status.SUCCESS
         else:
             # output the pre_checked df_combined to temp folder, directly mark problems on the combined file
@@ -321,16 +395,8 @@ class FileProcessor:
             df_combined.to_excel(os.path.join(self.temp_file_path, 
                                 f'failed_prechecking_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'), 
                                 index = False)
-            # archive the old input file, shift the combined input file to be the new round of input
-            for file in os.listdir(self.tp_file_path):
-                if file.endswith('.xlsx'):
-                    os.rename(os.path.join(self.tp_file_path, file), 
-                              os.path.join(self.processed_file_path, file))
-            print("old input file(s) are moved from 'to_process' to 'processed' folder")
-            df_combined.to_excel(os.path.join(self.temp_file_path,
-                                              f'TP_INPUT_prechecked_with_error.xlsx'),
-                                              index = False)
-            print("pre-check failed, please carefully review console message and check the temp folder report for more details, once problems fixed, try again.")
+            # do not archive the input file(s), keep the file as it is for user to check and make necessary changes
+            print(f"Pre-check {Fore.LIGHTRED_EX}***FAILED***{Style.RESET_ALL}, please carefully review console message and check the temp folder report for more details, once problems fixed, try again.")
         
         return Status.FAILED
     
@@ -592,11 +658,21 @@ class FileProcessor:
         'Effective Date', 'Expiration Date', 'Contract Line', 'Manufacturer', 'Vendor',
         'Contract', 'ItemType', 'OnHold', 'ActiveLine', 'ContractLineState', 'Contract.ContractStatus',
         'ContractImport', 'FileName', 'ExpirationFlag', 'Active Rank']
+
+        the scoping method will always take the reduced format of manufacturer as the join key
         """
-        tp_std = self.standardize(StandardizeTarget.TP)
-        infor_std = self.standardize(StandardizeTarget.INFOR)
+        if self.tp_std is None:
+            tp_std = self.standardize(StandardizeTarget.TP)
+        else:
+            tp_std = self.tp_std
+        
+        if self.infor_std is None:
+            infor_std = self.standardize(StandardizeTarget.INFOR)
+        else:
+            infor_std = self.infor_std
+        
         tp_mini = tp_std[['Contract Number', 'seq', 'MFN', 'VN', 'Description', 'UnitCost', 'MFN RF']].copy()
-        mfn_to_check = set(tp_mini['MFN RF'])
+        mfn_to_check = set(tp_mini['MFN'])
         mfn_rf_to_check = set(tp_mini['MFN RF'])
         infor_cols_to_take = ['Description', 'UnitCost', 'MFN', 'MFN RF', 'VN', 'Contract Number',
                               'Manufacturer', 'Vendor']
@@ -609,14 +685,36 @@ class FileProcessor:
         infor_interferring.loc[:, 'VendorName'] = infor_interferring['Vendor'].apply(lambda x: self.vendor_map(x)[0])
         infor_interferring.loc[:, 'Supplier'] = infor_interferring['Vendor'].apply(lambda x: self.vendor_map(x)[-1])
         infor_interferring.loc[:, 'ManufacturerName'] = infor_interferring['Manufacturer'].apply(lambda x: self.manufacturer_map(x))
+        tp_mini.loc[:, 'Take'] = ''
         scoping_df = tp_mini.merge(infor_interferring,
                                    on = ['MFN RF'], 
-                                   how = 'inner')
-        scoping_df.to_excel(os.path.join(self.output_file_path, 
-                                         f'scoping_manual_review_{self.datesig}.xlsx'),
-                                         index = False)
-        print(f"scoping file is saved as 'scoping_manual_review_{self.datesig}.xlsx' in the output folder for manual review. Once reviewed, change the file name to 'scoping_manual_reviewed.xlsx'")
-        scoping_reviewed = input("Have you reviewed the scoping file and identified the contract we want to include in subsequent steps? (yes/no)").lower()
+                                   how = 'inner',
+                                   suffixes=('_ccx', '_infor'))
+        scoping_df.loc[:, 'Same MFN'] = scoping_df['MFN_ccx'] == scoping_df['MFN_infor']
+        scoping_df_colarrg = ['Contract Number_ccx', 'seq',
+                              'MFN_ccx', 'VN_ccx', 'Description_ccx', 'UnitCost_ccx', 
+                              'Description_infor', 'UnitCost_infor',
+                              'Take', 'MFN RF', 'Same MFN', 
+                              'MFN_infor', 'VN_infor', 'Contract Number_infor',
+                              'Supplier',
+                              'Manufacturer', 'ManufacturerName',
+                              'Vendor', 'VendorName']
+        scoping_df = scoping_df[scoping_df_colarrg].copy()
+        scoping_df.sort_values(by = ['Supplier', 'Contract Number_infor'], inplace = True)
+        
+        with pd.ExcelWriter(os.path.join(self.output_file_path,
+                                         f'scoping_manual_review_{self.datesig}.xlsx')) as writer:
+            scoping_df.to_excel(writer, sheet_name = 'ToReview', index = False)
+            headers = ['Contract Number_infor', 'Supplier']
+            empty_df = pd.DataFrame(columns = headers)
+            empty_df.to_excel(writer, sheet_name = 'ContractToTake', index = False)
+        print(f"""scoping file is saved as 
+{Fore.LIGHTGREEN_EX}'scoping_manual_review_{self.datesig}.xlsx'{Style.RESET_ALL} in the 
+output folder for manual review. Once reviewed, copy and paste infor contract(s) 
+contain duplicates to tab 'ContractToTake', and rename the file 
+to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replace("\n", ""))
+        
+        scoping_reviewed = input("Have you reviewed the scoping file and identified the contract we want to include in subsequent steps? (yes/no)").lower()    
         if scoping_reviewed == 'yes' or scoping_reviewed == 'y':
             try:
                 scoping_df = pd.read_excel(os.path.join(self.output_file_path, 
@@ -629,7 +727,36 @@ class FileProcessor:
         
         return Status.FAILED
     
-    def set_scope(self, search_term: str = None):
+    
+    def set_scope(self):
+        """True function to set scope
+        1. use the set_scope_helper to get and display the contract we will download from CCX
+        2. if we don't like the results we could retry until we are satisfied
+        the function will eventually set the searching scope to the object"""
+        
+        search_scope = self.set_scope_helper()
+        
+        # if user is not satisfied with the search scope, we will retry differernt search term
+        # until the re_scoping input is set to 'N'
+        re_scoping = 'Y'
+        re_scoping = input("Want to try different search term(s)? (Y/N)")
+        while re_scoping.lower() in ['yes', 'y']:
+            search_scope = self.set_scope_helper()
+            re_scoping = input("Want to try different search term(s)? (Y/N)")
+            if re_scoping.lower() in ['no', 'n']:
+                break
+      
+        if len(search_scope) > 0 and search_scope is not None:  
+            self.search_scope = search_scope
+            ccx_downlaod = input("Contract(s) listed above are downloaded from CCX? (Y/N)")
+            if ccx_downlaod.lower() in ['yes', 'y']:
+                print(f"searching scope is set to {search_scope}")
+                return Status.SUCCESS          
+        
+        return Status.FAILED
+    
+    
+    def set_scope_helper(self, search_term: str = None):
         """Set searching space by combining
         1. the contract numbers screened after scoping manual review
         2. the contract numbers registered under the targeted manufacturer on ccx
@@ -640,11 +767,11 @@ class FileProcessor:
         scoping_manual_reviewed = pd.read_excel(os.path.join(self.output_file_path, 
                                                             f'scoping_manual_reviewed.xlsx'),
                                                 dtype = str,
-                                                sheet_name = 'Sheet2')
+                                                sheet_name = 'ContractToTake')
         if len(scoping_manual_reviewed) == 0:
             pass
         else:
-            scoping_reviewed = scoping_manual_reviewed['Contract Number_y'].tolist()
+            scoping_reviewed = scoping_manual_reviewed['Contract Number_infor'].tolist()
 
         # from CCX search
         contract_organization_df = pd.read_excel(os.path.join(self.shared_file_path,
@@ -652,15 +779,15 @@ class FileProcessor:
                                                 dtype = str)
         for col in ['Manufacturer', 'Vendor', 'ERP Vendor Number']:
             contract_organization_df.loc[:, col] = contract_organization_df[col].fillna('')
-        contract_organization_df
+        
         # make selections based on our search criteria
-        search_term_set_up = input("do we want to default scope to current manufacturer? (yes/no)")
+        search_term_set_up = input(f"Default scope to current manufacturer '{self.manufacturer}'? (yes/no)")
         if search_term_set_up.lower() == 'yes' or search_term_set_up.lower() == 'y':
             search_term = self.manufacturer
         elif search_term_set_up.lower() == 'no' or search_term_set_up.lower() == 'n':
-            search_term = input("enter the manufacturer name to scope (if more than one, using pipe in between):")
+            search_term = input("Enter the manufacturer name (if more than one, using pipe '|' to separate):")
         else:
-            print("invalid input. scope default to current manufacturer.")
+            print(f"invalid input. Defaulted to current manufacturer '{self.manufacturer}'.")
             search_term = self.manufacturer
 
         manufacturer_to_look = contract_organization_df['Manufacturer'].str.contains(search_term, 
@@ -672,20 +799,18 @@ class FileProcessor:
                                                         ERP_linked]['Contract Number'].tolist()
         
         all_contracts_to_look = sorted(list(set(contract_inscope_ccx + scoping_reviewed)))
-        print("Verify we have downloaded at least these contract(s) from CCX:")
+        all_contracts_to_look = sorted(list(set([i.upper().strip() for i in all_contracts_to_look])))
+        # fetch the manufacturer attached to these contract
+        manufacturer_contract_map = contract_organization_df[['Contract Number', 'Manufacturer']].copy()
+        manufacturer_contract_map.drop_duplicates(subset = ['Contract Number'], 
+                                                  keep = 'first', inplace = True)
+        manufacturer_contract_dict = {k: v for k, v in zip(manufacturer_contract_map['Contract Number'].apply(lambda x: x.upper()), 
+                                                           manufacturer_contract_map['Manufacturer'])}
+        print("Contract(s) to be screened:")
         for i, contract in enumerate(all_contracts_to_look):
-            print(i, contract)
+            print(f"{i+1:<3} {contract:<40}, {manufacturer_contract_dict.get(contract.upper(), 'Unknown')}")
         
-        ccx_data_ready = "no"
-        ccx_data_ready = input(f"we have all the contracts we need under the designated folder {self.ccx_file_path}? (yes/no)")
-        # this is important -- after running this function, the object sets its searching space
-        if ccx_data_ready.lower() == 'yes' or ccx_data_ready.lower() == 'y':
-            self.search_scope = all_contracts_to_look
-            return Status.SUCCESS
-        else:
-            print(f"please download all suggested contracts from CCX and put them under path {self.ccx_file_path}, then try again.")
-    
-        return Status.FAILED
+        return all_contracts_to_look
     
     def standardize_all_and_stack(self):
         """Standardize all four major sources of input tables
@@ -695,10 +820,22 @@ class FileProcessor:
         4. CCX downloaded contract
         when all files output to temp foloder, many subsequent comparisons can be made in 
         various flexible ways"""
-        tp_std = self.standardize(StandardizeTarget.TP)
-        infor_std = self.standardize(StandardizeTarget.INFOR)
-        import_std = self.standardize(StandardizeTarget.IMPORT)
-        ccx_std = self.standardize(StandardizeTarget.CCX)
+        if self.tp_std is None:
+            tp_std = self.standardize(StandardizeTarget.TP)
+        else:
+            tp_std = self.tp_std
+        if self.infor_std is None:
+            infor_std = self.standardize(StandardizeTarget.INFOR)
+        else:
+            infor_std = self.infor_std
+        if self.import_std is None:
+            import_std = self.standardize(StandardizeTarget.IMPORT)
+        else:
+            import_std = self.import_std
+        if self.ccx_std is None:
+            ccx_std = self.standardize(StandardizeTarget.CCX)
+        else:
+            ccx_std = self.ccx_std
         
         if self.search_scope is None:
             print("searching scope not set, please run set_scope() function first and try again")
@@ -713,10 +850,19 @@ class FileProcessor:
 
         stacked_std = pd.concat([ccx_std, infor_std, import_std, tp_std], ignore_index = True)
         self.stacked_std = stacked_std
-        print(f"file sources are standardized and stacked togather, a hard copy will be created and stored under {self.temp_file_path}.")
-        stacked_std.to_excel(os.path.join(self.temp_file_path, 
-                                          f'stacked_std_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'),
-                                          index = False)
+        print(f"all file sources standardized, we have {len(stacked_std)} records in total.")
+        print(stacked_std.groupby(['Source System']).size().reset_index(name = 'counts'))
+
+        proof = input("do you want to create a data dump for the standardized data used in the project? (Y/N)")
+        if proof.lower() == 'yes' or proof.lower() == 'y':
+            print(f"""file sources are standardized and stacked togather, 
+                  a hard copy will be created and stored under {self.temp_file_path}. 
+                  This will take a while.""".replace("\n", ""))
+            stacked_std.to_excel(os.path.join(self.temp_file_path, 
+                                            f'stacked_std_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'),
+                                            index = False)
+        else:
+            pass
         return Status.SUCCESS
     
     def set_model(self, model_name:str = 'all-MiniLM-L6-v2'):
@@ -747,7 +893,7 @@ class FileProcessor:
             sims.append([val[2], s])
             if i%100 == 0:
                 print(f'processed {i}/{total_records_to_process} records.', end = "\r")
-        print(f'processed {i}/{total_records_to_process} records for description similarity.')
+        print(f'processed {i+1}/{total_records_to_process} records for description similarity.')
         sims_df = pd.DataFrame(sims, columns = ['ref', 'Description Similarity'])
         sims_calc_df = to_emb.merge(sims_df, on = ['ref'], how = 'left')
         sims_calc_df.drop('ref', axis = 1, inplace = True)
@@ -786,12 +932,12 @@ class FileProcessor:
         
         if len(dup_found) == 0:
             print("no duplication found in the search set. All good now.")
-            return Status.FAILED
+            return Status.PASS
        
         dup_found.loc[:, 'Same QOE'] = dup_found['QOE_x'] == dup_found['QOE_y']
         dup_found.loc[:, 'Same UOM'] = dup_found['UOM_x'] == dup_found['UOM_y']
-        dup_found.loc[:, 'UnitCostDiff'] = dup_found.apply(lambda x: x['UnitCost_x']/x['UnitCost_y']
-                                                           if x['UnitCost_y'] != 0
+        dup_found.loc[:, 'EACostDiff'] = dup_found.apply(lambda x: (x['UnitCost_x']/x['QOE_x'])/(x['UnitCost_y']/x['QOE_y'])
+                                                           if ((x['UnitCost_y']/x['QOE_y']) != 0 and x['QOE_x'] != 0)
                                                            else -1, axis = 1)
 
         # the long way of compute text similarity
@@ -819,7 +965,10 @@ class FileProcessor:
         dup_found_m.to_excel(os.path.join(self.output_file_path, 
                                           f'dup_search_review_{self.datesig}.xlsx'),
                                           index = False)
-        print(f"Initial search for duplication items completed, results are saved as 'dup_search_review_{self.datesig}.xlsx' in the temp folder. Please review and mark false positive matches under columns 'Drop' with 'x' and rename the reviewed file to 'dup_search_reviewed.xlsx")
+        print(f"""Initial search for duplication items completed, results are saved as 
+{Fore.LIGHTGREEN_EX}'dup_search_review_{self.datesig}.xlsx'{Style.RESET_ALL} in the temp folder. Please review 
+and mark false positive matches under columns 'Drop' with 'x' and rename the 
+reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'""".replace("\n", ""))
         
         duplication_review_completed = "no"
         duplication_review_completed = input("Have we reviewed the duplication search results and rename the file? (yes/no): ")
@@ -831,16 +980,16 @@ class FileProcessor:
             dup_found_clean.drop(columns = ['Drop'], inplace = True)
             dup_found_clean = dup_found_clean.reset_index(drop = True)
             # mark the lines for review
-            for col in ['UnitCostDiff', 'UnitCost_x', 'UnitCost_y', 'Description Similarity']:
+            for col in ['EACostDiff', 'UnitCost_x', 'UnitCost_y', 'Description Similarity']:
                 dup_found_clean.loc[:, col] = dup_found_clean[col].apply(lambda x: round(float(x),2) if not pd.isnull(x) else np.nan)
             for col in ['QOE_x', 'QOE_y']:
                 dup_found_clean.loc[:, col] = dup_found_clean[col].apply(lambda x: int(x) if not pd.isnull(x) else 0)
             
-            dups_review1 = dup_found_clean['Same UOM'] == False
-            dups_review2 = dup_found_clean['Same QOE'] == False
-            dups_review3 = ((dup_found_clean['UnitCostDiff'] > 4) | (dup_found_clean['UnitCostDiff'] < 0.25)) & \
+            dups_review1 = dup_found_clean['Same UOM'] == "False"
+            dups_review2 = dup_found_clean['Same QOE'] == "False"
+            dups_review3 = ((dup_found_clean['EACostDiff'] > 2) | (dup_found_clean['EACostDiff'] < 0.5)) & \
                            (dup_found_clean['Manufacturer'] != self.manufacturer)
-            dups_review4 = ((dup_found_clean['UnitCostDiff'] > 2) | (dup_found_clean['UnitCostDiff'] < 0.5)) & \
+            dups_review4 = ((dup_found_clean['EACostDiff'] > 1.5) | (dup_found_clean['EACostDiff'] < 0.65)) & \
                            (dup_found_clean['Manufacturer'] == self.manufacturer)
             dups_review5 = (dup_found_clean['UOM_x'] == 'EA') & (dup_found_clean['QOE_x'] != 1)
 
@@ -857,22 +1006,25 @@ class FileProcessor:
                             'Contract Number_y', 'Contract Line', 'Source System_y',
                             'Action', 
                             'MFN_x', 'VN_x',
-                            'Description_x', 'UOM_x', 'QOE_x', 'UnitCost_x',
+                            'Description_x', 'UnitCost_x', 'UOM_x', 'QOE_x',
                             'Contract Number_x',
-                            'Same UOM', 'Same QOE', 'UnitCostDiff', 'Description Similarity']].copy()
+                            'Same UOM', 'Same QOE', 'EACostDiff', 'Description Similarity']].copy()
             
-            dup_found_clean.to_excel(os.path.join(self.temp_file_path, "just a dummy file.xlsx"))
+            # in theory, if later we decide to output in same tab, we can use this format
+            # dup_found_clean.to_excel(os.path.join(self.temp_file_path, "just a dummy file.xlsx"))
             print(pre_output.shape)
 
-            # prepare to output the data into different tabs4
+            # prepare to output the data into different tabs
             to_output = {}
             for contract in pre_output['Contract Number_y'].unique():
                 print(contract)
                 to_output[contract] = pre_output[pre_output['Contract Number_y'] == contract]
             # output summary information so we know initially how many items on per contract inscope
             to_count_df = self.stacked_std[self.stacked_std['Source System'].isin(search_set + [base_set])].copy()
+            
             count_summary = to_count_df[to_count_df['Active Rank'] == '1'].groupby(['Source System', 
-                                                                                    'Contract Number']).\
+                                                                                    'Contract Number',
+                                                                                    'Manufacturer']).\
                                                                            agg(line_count = ('seq', 'count')).\
                                                                            reset_index()
             count_intersection = pre_output.groupby(['Source System_y',
@@ -887,14 +1039,18 @@ class FileProcessor:
                                 how = 'left')
             
             # Create an ExcelWriter object
-            with pd.ExcelWriter(os.path.join(self.output_file_path,
-                                             f'dedup_output_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx')) as writer:
-                # Write each DataFrame to a separate sheet
-                count_summary_to_output.to_excel(writer, sheet_name = 'quick_line_count', index = False)
-                for k, v in to_output.items():
-                    v.to_excel(writer, sheet_name = k, index = False)
-                dup_found_clean.to_excel(writer, sheet_name = 'all_dup_raw', index = False)
-            print(f"duplication search completed, report will be saved to {self.output_file_path}")
+            # with pd.ExcelWriter(os.path.join(self.output_file_path,
+            #                                  f'dedup_output_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx')) as writer:
+            #     # Write each DataFrame to a separate sheet
+            #     count_summary_to_output.to_excel(writer, sheet_name = 'quick_line_count', index = False)
+            #     for k, v in to_output.items():
+            #         v.to_excel(writer, sheet_name = k, index = False)
+            #     dup_found_clean.to_excel(writer, sheet_name = 'all_dup_raw', index = False)
+            # print(f"duplication search completed, report will be saved to {self.output_file_path}")
+            report_to_write = ReportFurnishing(self.folder_manager)
+            report_to_write.make_dedup_report(to_output,
+                                              count_summary_to_output,
+                                              dup_found_clean)
             return Status.SUCCESS
 
         else:
@@ -939,7 +1095,7 @@ class FileProcessor:
         itemUOM.loc[:, 'UOMConversion'] = itemUOM['UOMConversion'].apply(lambda x: int(float(x.replace(',',''))) if not pd.isnull(x) else 0)
         itemUOM.rename(columns = {'UnitOfMeasure': 'UOM'}, inplace = True)
         valid_buyuom = itemUOM[itemUOM['ValidForBuying'] != 'Not Valid'].copy()
-        valid_buyuom.loc[:, 'AllValidBuyUOMandCF'] = valid_buyuom['UOM'] + '*' + valid_buyuom['UOMConversion'].astype(int).astype(str)
+        valid_buyuom.loc[:, 'AllValidBuyUOMandCF'] = valid_buyuom['UOM'].astype(str) + '*' + valid_buyuom['UOMConversion'].astype(int).astype(str)
         all_buyuom = valid_buyuom.groupby(['Item'])['AllValidBuyUOMandCF'].apply(lambda x: ','.join(x)).to_frame().reset_index()
         # merge to tp_im
         im_label = tp_im.merge(valid_buyuom, on = ['Item', 'UOM'], how = 'left').\
@@ -955,6 +1111,7 @@ class FileProcessor:
                   'Effective Date', 'Expiration Date', 'MFN RF', 'Description_y', 'Description Similarity',
                   'MFN_y', 'Item', 'ItemType', 'UOMConversion', 'ValidForBuying',
                   'AllValidBuyUOMandCF_y', 'IM_check']].copy()
+        im_label_simple.sort_values(by = ['IM_check'], ascending = [True], inplace = True)
 
         im_label_simple = im_label_simple.drop_duplicates(subset = ['seq', 'Item'])
         im_label_simple.loc[:, 'Numbers of Item Matched'] = im_label_simple.groupby(['seq'])['Item'].transform('count')
