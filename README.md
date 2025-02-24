@@ -21,3 +21,8 @@ At first run, it will create folders called 'SAHRED_DATA' and we need to downloa
 under this folder, we also will need to keep a fixture file which helps to translate the UOM from multiple sources, this file is uploaded to the repository as well
 * UOM.csv
 
+run the program
+<code>
+python main.py
+</code>
+
