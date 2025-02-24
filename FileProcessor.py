@@ -126,7 +126,7 @@ class FileProcessor:
             self.set_model()
             standard_run = 'yes'
             base_set, search_set_input = 'TP', 'CCX'
-            standard_run = input('do we want to run a standard dup search between your to-be processed items Vs. CCX contract items? (yes/no)')
+            standard_run = input('do we want to run a standard dup search between your to-be processed items Vs. CCX contract items? (Y/N)')
             if standard_run.lower() == 'no' or standard_run.lower() == 'n':
                 base_set = input('which set you would like to run as base set? (type one of TP/Infor/Import/CCX)')
                 search_set_input = input('which set you would like to run as search set? (type in TP/Infor/Import/CCX, for multiple search sets, seperate by ",")')
@@ -714,7 +714,7 @@ output folder for manual review. Once reviewed, copy and paste infor contract(s)
 contain duplicates to tab 'ContractToTake', and rename the file 
 to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replace("\n", ""))
         
-        scoping_reviewed = input("Have you reviewed the scoping file and identified the contract we want to include in subsequent steps? (yes/no)").lower()    
+        scoping_reviewed = input("Have you reviewed the scoping file and identified the contract we want to include in subsequent steps? (Y/N)").lower()    
         if scoping_reviewed == 'yes' or scoping_reviewed == 'y':
             try:
                 scoping_df = pd.read_excel(os.path.join(self.output_file_path, 
@@ -781,7 +781,7 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
             contract_organization_df.loc[:, col] = contract_organization_df[col].fillna('')
         
         # make selections based on our search criteria
-        search_term_set_up = input(f"Default scope to current manufacturer '{self.manufacturer}'? (yes/no)")
+        search_term_set_up = input(f"Default scope to current manufacturer '{self.manufacturer}'? (Y/N)")
         if search_term_set_up.lower() == 'yes' or search_term_set_up.lower() == 'y':
             search_term = self.manufacturer
         elif search_term_set_up.lower() == 'no' or search_term_set_up.lower() == 'n':
@@ -851,15 +851,15 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
         stacked_std = pd.concat([ccx_std, infor_std, import_std, tp_std], ignore_index = True)
         self.stacked_std = stacked_std
         print(f"all file sources standardized, we have {len(stacked_std)} records in total.")
-        print(stacked_std.groupby(['Source System']).size().reset_index(name = 'counts'))
+        print(stacked_std.groupby(['Source System', 'Active Rank']).size().unstack())
 
         proof = input("do you want to create a data dump for the standardized data used in the project? (Y/N)")
         if proof.lower() == 'yes' or proof.lower() == 'y':
             print(f"""file sources are standardized and stacked togather, 
-                  a hard copy will be created and stored under {self.temp_file_path}. 
-                  This will take a while.""".replace("\n", ""))
-            stacked_std.to_excel(os.path.join(self.temp_file_path, 
-                                            f'stacked_std_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'),
+a hard copy will be created and stored under {self.temp_file_path}. 
+This will take a while.""".replace("\n", ""))
+            stacked_std.to_csv(os.path.join(self.temp_file_path, 
+                                            f'stacked_std_{self.manufacturer}_{self.contract}_{self.datesig}.csv'),
                                             index = False)
         else:
             pass
@@ -909,6 +909,7 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
         2. right_df usually will be ccx_std (ccx files to compare and find duplicates)
         But since the function is general, it can be adapted to any combination of interest
         """
+        print("searching for duplication items ......")
         # if we run to here, we need to make sure we already have everything run up to scope
         # the search set can be have more than one searching data group, just separate the input by comma
         search_set = search_set_input.split(',')
@@ -971,7 +972,7 @@ and mark false positive matches under columns 'Drop' with 'x' and rename the
 reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'""".replace("\n", ""))
         
         duplication_review_completed = "no"
-        duplication_review_completed = input("Have we reviewed the duplication search results and rename the file? (yes/no): ")
+        duplication_review_completed = input("Have we reviewed the duplication search results and rename the file? (Y/N): ")
         if duplication_review_completed.lower() == "yes" or duplication_review_completed.lower() == "y":
             dup_found_reviewed = pd.read_excel(os.path.join(self.output_file_path, 
                                                             'dup_search_reviewed.xlsx'),
@@ -1038,15 +1039,6 @@ reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'
                                 on = ['Source System', 'Contract Number'],
                                 how = 'left')
             
-            # Create an ExcelWriter object
-            # with pd.ExcelWriter(os.path.join(self.output_file_path,
-            #                                  f'dedup_output_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx')) as writer:
-            #     # Write each DataFrame to a separate sheet
-            #     count_summary_to_output.to_excel(writer, sheet_name = 'quick_line_count', index = False)
-            #     for k, v in to_output.items():
-            #         v.to_excel(writer, sheet_name = k, index = False)
-            #     dup_found_clean.to_excel(writer, sheet_name = 'all_dup_raw', index = False)
-            # print(f"duplication search completed, report will be saved to {self.output_file_path}")
             report_to_write = ReportFurnishing(self.folder_manager)
             report_to_write.make_dedup_report(to_output,
                                               count_summary_to_output,
@@ -1060,6 +1052,8 @@ reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'
     
     def itemmast_search_and_compare(self,
                                     check_mode: CheckMode = CheckMode.MFN_RF):
+        
+        print("Try matching item master items ......")
         im_df = self.stacked_std[(self.stacked_std['Source System'] == 'Infor') & 
                                  (self.stacked_std['ItemType'] == 'Itemmast') &
                                  (self.stacked_std['Active Rank'] == '1')].copy()
@@ -1115,9 +1109,9 @@ reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'
 
         im_label_simple = im_label_simple.drop_duplicates(subset = ['seq', 'Item'])
         im_label_simple.loc[:, 'Numbers of Item Matched'] = im_label_simple.groupby(['seq'])['Item'].transform('count')
-        im_label_simple.to_excel(os.path.join(self.output_file_path,
-                                                f'itemmast_matched_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'),
-                                                index = False)
+        
+        report_to_write = ReportFurnishing(self.folder_manager)
+        report_to_write.make_itemmast_report(im_label_simple)
         print('item master matching completed successfully, results are saved to output folder.')
         
         return Status.SUCCESS
@@ -1126,7 +1120,7 @@ reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'
                                         check_mode: CheckMode = CheckMode.MFN_RF):
         """compare two contracts: TP - new, replacement ccx - old contract to be replaced to identify
         1. items only lives on old contract
-        2. items only lives on old contract and marked as itemmast on Infor"""
+        2. items only lives on old contract and marked as itemmast on Infor (if none, type in 'nan')"""
         replaced_contract = input("please enter the replacement contract number: ")
         replaced_contract = replaced_contract.strip().upper()
         replacement_ccx_df = self.stacked_std[(self.stacked_std['Source System'] == 'CCX') & 
@@ -1166,9 +1160,8 @@ reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'
             return Status.SUCCESS
         else:
             replacement_leftover_df.sort_values(by = ['ItemType'], ascending = [True], inplace = True)
-            replacement_leftover_df.to_excel(os.path.join(self.output_file_path,
-                                                          f'replacement_leftover_{replaced_contract}_{self.datesig}.xlsx'),
-                                                          index = False)
+            report_to_write = ReportFurnishing(self.folder_manager)
+            report_to_write.make_replacement_report(replacement_leftover_df)
             print(f"replacement contract pair check completed, results are saved to output folder.")
         return Status.SUCCESS
     

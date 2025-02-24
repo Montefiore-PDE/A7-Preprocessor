@@ -49,7 +49,7 @@ if __name__ == '__main__':
         exit_program = input('Do you want to exit the program? (Y/N):')
         if exit_program.lower() == 'y' or exit_program.lower() == 'yes' or exit_program.lower() == 'exit':
             exit_program = True
-            print("Bye.")
+            print("Enjoy your day, bye.")
         else:
             new_project = input('Do you want to start a new project? (Y/N):')
             if new_project.lower() == 'y' or new_project.lower() == 'yes':
@@ -59,4 +59,4 @@ if __name__ == '__main__':
                 folder_manager = None
             else:
                 exit_program = True
-                print("Bye.")
+                print("Enjoy your day, bye.")
