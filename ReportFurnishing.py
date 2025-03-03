@@ -157,7 +157,7 @@ class ReportFurnishing:
                                                                           'criteria': '==',
                                                                           'value': '"Review"',
                                                                           'format': cell_format_warning})
-                worksheet.autofilter(0, 0, df.shape[0], df.shape[1])
+                worksheet.autofilter(0, 0, df.shape[0], df.shape[1]-1)
             
             df_raw.to_excel(writer, sheet_name='Raw', index=False)
         
@@ -190,7 +190,7 @@ class ReportFurnishing:
                 worksheet.write(0, col_num, df.columns[col_num], fmt)
             
             cell_format_warning = workbook.add_format(self.cell_format_warning)
-            worksheet.conditional_format(1, 0, df.shape[0], df.shape[1], {'type': 'cell',
+            worksheet.conditional_format(1, 0, df.shape[0], df.shape[1]-1, {'type': 'cell',
                                                                           'criteria': '==',
                                                                           'value': '"Failed"',
                                                                           'format': cell_format_warning})
@@ -221,7 +221,7 @@ class ReportFurnishing:
                 worksheet.write(0, col_num, df.columns[col_num], fmt)
             
             cell_format_warning = workbook.add_format(self.cell_format_warning)
-            worksheet.conditional_format(1, 0, df.shape[0], df.shape[1], {'type': 'cell',
+            worksheet.conditional_format(1, 0, df.shape[0], df.shape[1]-1, {'type': 'cell',
                                                                           'criteria': '==',
                                                                           'value': '"Immast"',
                                                                           'format': cell_format_warning})

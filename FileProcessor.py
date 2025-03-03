@@ -1,4 +1,5 @@
 import os
+import time
 import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -25,6 +26,11 @@ class FileProcessor:
 
     _infor_std_cache = None
     _import_std_cache = None
+    _shared_data_path = os.path.join(os.getcwd(), 'SHARED_DATA')
+    _std_cols = ['Contract Number', 'MFN', 'VN', 'IN', 'Description', 'UnitCost', 'UOM', 'QOE',
+            'Effective Date', 'Expiration Date', 'Contract Line', 'Manufacturer', 'Vendor',
+            'Contract', 'ItemType', 'OnHold', 'ActiveLine', 'ContractLineState', 'Contract.ContractStatus',
+            'ContractImport', 'FileName']
 
     def __init__(self, 
                 folder_manager: FolderManager,
@@ -48,16 +54,15 @@ class FileProcessor:
         self.output_file_path = folder_manager.get_folder_path('output')
         self.processed_file_path = folder_manager.get_folder_path('processed')
         self.temp_file_path = folder_manager.get_folder_path('temp')
+        self.no_scoping_review = False
+        self.no_ccx_contract_inscope = False
         self.search_scope = []
         self.tp_std = None
         self.ccx_std = None
         self.stacked_std = None
         self.model = None
 
-        if data_caching == False:
-            self.infor_std = None
-            self.import_std = None
-        else:
+        if data_caching == True:
             if FileProcessor._infor_std_cache is None:
                 FileProcessor._infor_std_cache = self.standardize(StandardizeTarget.INFOR)
             self.infor_std = FileProcessor._infor_std_cache
@@ -69,13 +74,75 @@ class FileProcessor:
 
     @classmethod
     def reset_cache(cls):
+        """only call when we exit the program"""
         cls._infor_std_cache = None
         cls._import_std_cache = None
+
+    @classmethod
+    def isFileFresh(cls,
+                    file_path: str,
+                    days: int = 2):
+        """
+        validate if the file is created within the last 'days' days
+        """
+        threshold_seconds = days * 86400  # seconds in 'days' days
+        current_time = time.time()
+        creation_time = os.path.getmtime(file_path)
+        if current_time - creation_time > threshold_seconds:
+            return False
+        return True
+    
+    # program running level control ?
+    @classmethod
+    def check_shared_data(cls):
+        """a checker to ask user's to check if they have all the 
+        necessary shared data files ready in the SHARED_DATA folder"""
+        shared_data_files = {'Manufacturers.csv': ['INFOR', 1, False], 
+                             'Suppliers.csv': ['INFOR', 1, False], 
+                             'ItemUOM.csv': ['INFOR', 1, False], 
+                             'VendorItems.csv': ['INFOR', 1, False],
+                             'ContractOrganization.xlsx': ['CCX',1, False],
+                             'ContractLine.csv': ['INFOR', 1, False],
+                             'ContractLineImport.csv': ['INFOR', 1, False],
+                             'UOM.csv': ['I Drive', 1, True]}
+        
+        if not os.listdir(cls._shared_data_path):
+            print(f"{Fore.LIGHTRED_EX}No files were found{Style.RESET_ALL} in the SHARED_DATA folder, please download all necessary files and retry.")
+            return False
+
+        file_missing = []
+        file_stale = []
+        for file in shared_data_files.keys():
+            if not os.path.exists(os.path.join(cls._shared_data_path, file)):
+                file_missing.append(file)
+                shared_data_files[file][1] = 0
+            else:
+                shared_data_files[file][1] = 1
+                if file != 'UOM.csv':
+                    shared_data_files[file][2] = cls.isFileFresh(os.path.join(cls._shared_data_path, file), days = 2)
+                    if not shared_data_files[file][2]:
+                        file_stale.append(file)
+        
+        if len(file_missing) > 0:
+            for file in file_missing:
+                print(f"{Fore.LIGHTRED_EX}{file} is missing{Style.RESET_ALL}. Download it from {shared_data_files[file][0]} to the SHARED_DATA folder, then retry.")
+                return False
+        
+        if len(file_stale) > 0:
+            for file in file_stale:
+                print(f"{Fore.LIGHTYELLOW_EX}{file} is stale{Style.RESET_ALL}, best to use fresh copy within past 48 hours by downloading it from {shared_data_files[file][0]}.")
+            stale_data = input(f"{Fore.LIGHTYELLOW_EX}Stale data can bring inaccurate results, continue to use without refresh? (Y/N){Style.RESET_ALL}")
+            if stale_data.lower() in ['n', 'no', 'exit', 'quit']:
+                return False
+
+        return True
+
 
     def set_check_mode(self):
         check_mode = input("Please select the check mode for the pre-check process, key in 'MFN' or 'MFN RF': ")
         self.check_mode = CheckMode.MFN if check_mode.upper() == 'MFN' else CheckMode.MFN_RF
-
+        print(f"Check mode is set to {self.check_mode}")
+        return None
     
     def MFN_reformat(self, MFN: str):
         """
@@ -142,6 +209,11 @@ class FileProcessor:
             self.standardize_all_and_stack()
             self.set_model()
             self.itemmast_search_and_compare(check_mode = self.check_mode)
+        elif process_type == ProcessType.replacement_contract_pair_check:
+            print('Initiating replacement contract pair check process .......')
+            self.set_scope(search_term = self.manufacturer)
+            self.standardize_all_and_stack()
+            self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
         elif process_type == ProcessType.ccx_dup_search_and_itemmast_match:
             print('Initiating pre-processor reporting process .......')
             self.set_scope(search_term = self.manufacturer)
@@ -152,62 +224,63 @@ class FileProcessor:
                             search_set_input = 'CCX')
             self.itemmast_search_and_compare(check_mode = self.check_mode)
             self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
-        elif process_type == ProcessType.replacement_contract_pair_check:
-            print('Initiating replacement contract pair check process .......')
-            self.set_scope(search_term = self.manufacturer)
-            self.standardize_all_and_stack()
-            self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
         elif process_type == ProcessType.full_process:
             print('Initiating full process for preprocessor .......')
             s_pre_check, s_scoping, s_set_scope, s_std = Status.FAILED, Status.FAILED, Status.FAILED, Status.FAILED
             s_dup_run, s_im_match, s_replace = Status.FAILED, Status.FAILED, Status.FAILED
-            file_ready = input(f"please put your file to be processed to {self.tp_file_path}, ready to run (Y/N)?: ")
-            if file_ready.lower() == 'yes' or file_ready.lower() == 'y' or file_ready.lower() == 'ready': 
+            file_ready = input(f"{Fore.MAGENTA}*** User File Action Required ***{Style.RESET_ALL} Please put your file to be processed to {self.tp_file_path}, ready to run (Y/N)?: ")
+            if file_ready.lower() in ['yes', 'y', 'ready']: 
                 s_pre_check = self.pre_check(check_mode = self.check_mode)
                 while s_pre_check == Status.FAILED: 
                     pre_check_retry = input('Exit or Retry? (E/R)')
-                    if pre_check_retry.lower() == 'r' or pre_check_retry.lower() == 'retry':
+                    if pre_check_retry.lower() in ['r' 'retry']:
                         s_pre_check = self.pre_check(check_mode = self.check_mode)
                     else:
-                        print("Exit preprocessor, bye.")
-                        break
+                        input("Press any key to exit ...")
+                        return None
             else:
-                print("Exit preprocessor, bye.")
+                input("Press any key to exit ...")
                 return None
             
             s_scoping = self.scoping()
             while s_scoping == Status.FAILED: 
                 scoping_retry = input('Exit or Retry? (E/R)')
-                if scoping_retry.lower() == 'r' or scoping_retry.lower() == 'retry':
+                if scoping_retry.lower() in ['r', 'retry']:
                     s_scoping = self.scoping()
                 else:
-                    print("Exit preprocessor, bye.")
-                    break
+                    input("Press any key to exit ...")
+                    return None
             
             s_set_scope = self.set_scope()
             if s_set_scope == Status.FAILED:
-                print("Exit preprocessor, bye.")
+                print("Something went wrong during scope set.")
+                input("Please contact the developer for help, press any key to exit ...")
                 return None
 
             s_std = self.standardize_all_and_stack()
             if s_std == Status.FAILED:
-                print("Exit preprocessor, bye.")
+                print("Something went wrong during standardization.")
+                input("Please contact the developer for help, press any key to exit ...")
                 return None
             
-            self.set_model()
+            self.set_model() # set the model for sentence transformer
+            
             s_dup_run = self.dup_search_and_compare(check_mode = self.check_mode,
                                                     base_set = 'TP',
                                                     search_set_input = 'CCX')
             if s_dup_run == Status.FAILED:
                 print("Duplication search failed.")
+                input("Press any key to continue ...")
                 
             s_im_match = self.itemmast_search_and_compare(check_mode = self.check_mode)
             if s_im_match == Status.FAILED:
                 print("Itemmast search failed.")
+                input("Press any key to continue ...")
             
             s_replace = self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
             if s_replace == Status.FAILED:
                 print("Replacement contract pair check failed.")
+                input("Press any key to continue ...")
 
         else:
             print(f'Invalid process type: {process_type}')
@@ -359,7 +432,7 @@ class FileProcessor:
         # output the pre_checked - deduped file
         # if all checks passsed
         if checker_null_value and checker_dup_value and checker_unknwon_uom and checker_EA_QOE:
-            print(f"Pre-checking {Fore.LIGHTGREEN_EX}***PASSED***{Style.RESET_ALL}, preparing the combined file ......")
+            print(f"Pre-checking {Fore.LIGHTGREEN_EX}*** PASSED ***{Style.RESET_ALL}, preparing the combined file ......")
             all_items = df_combined.drop_duplicates(subset = ['Mfg Part Num', 
                                                             'Contract Number',
                                                             'Contract Price',
@@ -396,7 +469,7 @@ class FileProcessor:
                                 f'failed_prechecking_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'), 
                                 index = False)
             # do not archive the input file(s), keep the file as it is for user to check and make necessary changes
-            print(f"Pre-check {Fore.LIGHTRED_EX}***FAILED***{Style.RESET_ALL}, please carefully review console message and check the temp folder report for more details, once problems fixed, try again.")
+            print(f"Pre-check {Fore.LIGHTRED_EX}*** FAILED ***{Style.RESET_ALL}, please carefully review console message and check the temp folder report for more details, once problems fixed, try again.")
         
         return Status.FAILED
     
@@ -471,8 +544,7 @@ class FileProcessor:
             'Effective Date', 'Expiration Date', 'Contract Line', 'Manufacturer', 'Vendor',
             'Contract', 'ItemType', 'OnHold', 'ActiveLine', 'ContractLineState', 'Contract.ContractStatus',
             'ContractImport', 'FileName']
-        
-        
+                
         if target_file == StandardizeTarget.INFOR:
             print("standardizing Infor files ......")
             file_path = self.shared_file_path
@@ -659,6 +731,7 @@ class FileProcessor:
         'Contract', 'ItemType', 'OnHold', 'ActiveLine', 'ContractLineState', 'Contract.ContractStatus',
         'ContractImport', 'FileName', 'ExpirationFlag', 'Active Rank']
 
+
         the scoping method will always take the reduced format of manufacturer as the join key
         """
         if self.tp_std is None:
@@ -690,6 +763,10 @@ class FileProcessor:
                                    on = ['MFN RF'], 
                                    how = 'inner',
                                    suffixes=('_ccx', '_infor'))
+        if len(scoping_df) == 0:
+            print("No potential overlaps found between TP and Infor contract lines, Let's look at CCX contracts under the same manufacturer only.")
+            self.no_scoping_review = True
+            return Status.SUCCESS
         scoping_df.loc[:, 'Same MFN'] = scoping_df['MFN_ccx'] == scoping_df['MFN_infor']
         scoping_df_colarrg = ['Contract Number_ccx', 'seq',
                               'MFN_ccx', 'VN_ccx', 'Description_ccx', 'UnitCost_ccx', 
@@ -714,8 +791,8 @@ output folder for manual review. Once reviewed, copy and paste infor contract(s)
 contain duplicates to tab 'ContractToTake', and rename the file 
 to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replace("\n", ""))
         
-        scoping_reviewed = input("Have you reviewed the scoping file and identified the contract we want to include in subsequent steps? (Y/N)").lower()    
-        if scoping_reviewed == 'yes' or scoping_reviewed == 'y':
+        scoping_reviewed = input(f"{Fore.MAGENTA}*** User File Action Required ***{Style.RESET_ALL} Have you reviewed the scoping file and identified the contract we want to include in subsequent steps? (Y/N)").lower()    
+        if scoping_reviewed in ['yes', 'y', 'reviewed']:
             try:
                 scoping_df = pd.read_excel(os.path.join(self.output_file_path, 
                                                         f'scoping_manual_reviewed.xlsx'),
@@ -733,13 +810,14 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
         1. use the set_scope_helper to get and display the contract we will download from CCX
         2. if we don't like the results we could retry until we are satisfied
         the function will eventually set the searching scope to the object"""
+
         
         search_scope = self.set_scope_helper()
         
         # if user is not satisfied with the search scope, we will retry differernt search term
         # until the re_scoping input is set to 'N'
         re_scoping = 'Y'
-        re_scoping = input("Want to try different search term(s)? (Y/N)")
+        re_scoping = input("Want to reset current searching scope? (Y/N)")
         while re_scoping.lower() in ['yes', 'y']:
             search_scope = self.set_scope_helper()
             re_scoping = input("Want to try different search term(s)? (Y/N)")
@@ -747,15 +825,21 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
                 break
       
         if len(search_scope) > 0 and search_scope is not None:  
-            self.search_scope = search_scope
+            print(f"{Fore.MAGENTA}*** User File Action Required ***{Style.RESET_ALL} Please go to CCX to download the contract(s) listed above.")
             ccx_downlaod = input("Contract(s) listed above are downloaded from CCX? (Y/N)")
             if ccx_downlaod.lower() in ['yes', 'y']:
-                print(f"searching scope is set to {search_scope}")
-                return Status.SUCCESS          
-        
+                self.ccx_file_validation(search_scope)
+                ccx_file_confirmation = input("Please confirm these are the contracts you want to use for duplication search on CCX? (Y/N)")
+                while ccx_file_confirmation.lower() not in ['yes', 'y']:
+                    input("Okay, please go back to CCX and download the desired contract(s), then press any key to continue.")
+                    self.ccx_file_validation(search_scope)
+                    ccx_file_confirmation = input("Please confirm these are the contracts you want to use for duplication search on CCX? (Y/N)")
+                self.search_scope = search_scope
+                return Status.SUCCESS
+            
         return Status.FAILED
     
-    
+
     def set_scope_helper(self, search_term: str = None):
         """Set searching space by combining
         1. the contract numbers screened after scoping manual review
@@ -764,14 +848,16 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
         then we have the data ready to do duplication search"""
         scoping_reviewed, contract_inscope_ccx = [], []
         # from manual review
-        scoping_manual_reviewed = pd.read_excel(os.path.join(self.output_file_path, 
-                                                            f'scoping_manual_reviewed.xlsx'),
-                                                dtype = str,
-                                                sheet_name = 'ContractToTake')
-        if len(scoping_manual_reviewed) == 0:
-            pass
-        else:
-            scoping_reviewed = scoping_manual_reviewed['Contract Number_infor'].tolist()
+        if self.no_scoping_review == False:
+            scoping_manual_reviewed = pd.read_excel(os.path.join(self.output_file_path, 
+                                                                f'scoping_manual_reviewed.xlsx'),
+                                                    dtype = str,
+                                                    sheet_name = 'ContractToTake')
+            scoping_manual_reviewed = scoping_manual_reviewed.drop_duplicates()
+            if len(scoping_manual_reviewed) == 0:
+                pass
+            else:
+                scoping_reviewed = scoping_manual_reviewed['Contract Number_infor'].tolist()
 
         # from CCX search
         contract_organization_df = pd.read_excel(os.path.join(self.shared_file_path,
@@ -781,13 +867,13 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
             contract_organization_df.loc[:, col] = contract_organization_df[col].fillna('')
         
         # make selections based on our search criteria
-        search_term_set_up = input(f"Default scope to current manufacturer '{self.manufacturer}'? (Y/N)")
+        search_term_set_up = input(f"Default contract searching scope to current manufacturer '{self.manufacturer}'? (Y/N)")
         if search_term_set_up.lower() == 'yes' or search_term_set_up.lower() == 'y':
             search_term = self.manufacturer
         elif search_term_set_up.lower() == 'no' or search_term_set_up.lower() == 'n':
-            search_term = input("Enter the manufacturer name (if more than one, using pipe '|' to separate):")
+            search_term = input("Enter the manufacturer name (if more than one, using pipe '|' to separate if we have multiple):")
         else:
-            print(f"invalid input. Defaulted to current manufacturer '{self.manufacturer}'.")
+            print(f"Invalid input. Defaulted to current manufacturer '{self.manufacturer}'.")
             search_term = self.manufacturer
 
         manufacturer_to_look = contract_organization_df['Manufacturer'].str.contains(search_term, 
@@ -799,6 +885,11 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
                                                         ERP_linked]['Contract Number'].tolist()
         
         all_contracts_to_look = sorted(list(set(contract_inscope_ccx + scoping_reviewed)))
+        if all_contracts_to_look == []:
+            self.no_ccx_contract_inscope = True
+            print("No contract found for subsequent duplication search.")
+            return all_contracts_to_look
+        
         all_contracts_to_look = sorted(list(set([i.upper().strip() for i in all_contracts_to_look])))
         # fetch the manufacturer attached to these contract
         manufacturer_contract_map = contract_organization_df[['Contract Number', 'Manufacturer']].copy()
@@ -808,9 +899,44 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
                                                            manufacturer_contract_map['Manufacturer'])}
         print("Contract(s) to be screened:")
         for i, contract in enumerate(all_contracts_to_look):
-            print(f"{i+1:<3} {contract:<40}, {manufacturer_contract_dict.get(contract.upper(), 'Unknown')}")
+            print(f"{i+1:<3} {contract:<40}| {manufacturer_contract_dict.get(contract.upper(), 'Unknown')}")
         
         return all_contracts_to_look
+    
+    
+    def ccx_file_validation(self, search_scope: list):
+        """Validate the CCX files downloaded against the searching scope
+        1. check if the files are present in ccx folder
+        2. check file name to see if they match to the list of scoped contracts and if they are .xlsx
+        3. check if the files in the ccx folder are older than 7 days
+        """
+        if search_scope == []:
+            print("Searching scope not set or empty, there is no CCX contract file to be validated.")
+            return None
+        
+        ccx_files_on_disk = []
+        ccx_file_stale = []
+        for file in os.listdir(self.ccx_file_path):
+            if file.endswith('.xlsx'):
+                ccx_files_on_disk.append(file.split('.')[0].upper())
+                if not FileProcessor.isFileFresh(os.path.join(self.ccx_file_path, file), days = 1):
+                    ccx_file_stale.append(file.split('.')[0].upper())
+        
+        found = "*** Found ***"
+        stale = "*** Stale ***"
+        miss = "*** Miss ***"
+        fresh = "*** Fresh ***"
+        empty = ""
+        for contract in search_scope:
+            if contract in ccx_files_on_disk:
+                if contract in ccx_file_stale:
+                    print(f"{stale:<15} {found:<15} {Fore.LIGHTYELLOW_EX}{contract}{Style.RESET_ALL} ")
+                else:
+                    print(f"{fresh:<15} {found:<15} {Fore.LIGHTGREEN_EX}{contract}{Style.RESET_ALL} ")
+            else:
+                print(f"{empty:<15} {miss:<15} {Fore.LIGHTRED_EX}{contract}{Style.RESET_ALL} ")
+        return None
+
     
     def standardize_all_and_stack(self):
         """Standardize all four major sources of input tables
@@ -820,6 +946,12 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
         4. CCX downloaded contract
         when all files output to temp foloder, many subsequent comparisons can be made in 
         various flexible ways"""
+        if self.search_scope == [] and self.no_ccx_contract_inscope == False:
+            print("searching scope not set, please run set_scope() function first and try again")
+            return Status.FAILED
+
+        print("current searching scope set as: ", self.search_scope)
+        
         if self.tp_std is None:
             tp_std = self.standardize(StandardizeTarget.TP)
         else:
@@ -832,38 +964,38 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
             import_std = self.standardize(StandardizeTarget.IMPORT)
         else:
             import_std = self.import_std
-        if self.ccx_std is None:
+        if self.ccx_std is None and self.no_ccx_contract_inscope == False:
             ccx_std = self.standardize(StandardizeTarget.CCX)
         else:
             ccx_std = self.ccx_std
-        
-        if self.search_scope is None:
-            print("searching scope not set, please run set_scope() function first and try again")
-            return Status.FAILED
-        
-        print("current searching scope set as: ", self.search_scope)
 
         search_scope = [i.upper() for i in self.search_scope]
         infor_std = infor_std[infor_std['Contract Number'].isin(search_scope)].copy()
         import_std = import_std[import_std['Contract Number'].isin(search_scope)].copy()
         ccx_std = ccx_std[ccx_std['Contract Number'].isin(search_scope)].copy()
-
-        stacked_std = pd.concat([ccx_std, infor_std, import_std, tp_std], ignore_index = True)
+        
+        std_to_combine = []
+        for std in [tp_std, infor_std, import_std, ccx_std]:
+            if std is not None:
+                std_to_combine.append(std)
+        stacked_std = pd.concat(std_to_combine, ignore_index = True)
         self.stacked_std = stacked_std
         print(f"all file sources standardized, we have {len(stacked_std)} records in total.")
         print(stacked_std.groupby(['Source System', 'Active Rank']).size().unstack())
 
-        proof = input("do you want to create a data dump for the standardized data used in the project? (Y/N)")
+        proof = input("Do you want to create a data dump for the standardized data used in the project? (Y/N)")
         if proof.lower() == 'yes' or proof.lower() == 'y':
             print(f"""file sources are standardized and stacked togather, 
 a hard copy will be created and stored under {self.temp_file_path}. 
 This will take a while.""".replace("\n", ""))
-            stacked_std.to_csv(os.path.join(self.temp_file_path, 
-                                            f'stacked_std_{self.manufacturer}_{self.contract}_{self.datesig}.csv'),
+            # output in excel to help preserve the data type and for ease of use
+            stacked_std.to_excel(os.path.join(self.temp_file_path, 
+                                            f'stacked_std_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'),
                                             index = False)
         else:
             pass
         return Status.SUCCESS
+    
     
     def set_model(self, model_name:str = 'all-MiniLM-L6-v2'):
         self.model = SentenceTransformer(model_name)
@@ -972,7 +1104,7 @@ and mark false positive matches under columns 'Drop' with 'x' and rename the
 reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'""".replace("\n", ""))
         
         duplication_review_completed = "no"
-        duplication_review_completed = input("Have we reviewed the duplication search results and rename the file? (Y/N): ")
+        duplication_review_completed = input(f"{Fore.MAGENTA}*** User File Action Required ***{Style.RESET_ALL} Have you reviewed the duplication search results and rename the file? (Y/N): ")
         if duplication_review_completed.lower() == "yes" or duplication_review_completed.lower() == "y":
             dup_found_reviewed = pd.read_excel(os.path.join(self.output_file_path, 
                                                             'dup_search_reviewed.xlsx'),
