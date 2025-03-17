@@ -233,7 +233,7 @@ class FileProcessor:
                 s_pre_check = self.pre_check(check_mode = self.check_mode)
                 while s_pre_check == Status.FAILED: 
                     pre_check_retry = input('Exit or Retry? (E/R)')
-                    if pre_check_retry.lower() in ['r' 'retry']:
+                    if pre_check_retry.lower() in ['r', 'retry']:
                         s_pre_check = self.pre_check(check_mode = self.check_mode)
                     else:
                         input("Press any key to exit ...")
@@ -286,6 +286,7 @@ class FileProcessor:
             print(f'Invalid process type: {process_type}')
     
         return None
+    
     
     def pre_check(self, check_mode:CheckMode = CheckMode.MFN_RF):
         """
@@ -798,7 +799,7 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
                                                         f'scoping_manual_reviewed.xlsx'),
                                            dtype = str)
             except FileNotFoundError as e:
-                print("file not found, please make sure the file is saved under name 'scoping_manual_reviewed.xlsx' and you have listed the contract needed in 'Sheet2' under column 'Contract Number_y'." )
+                print("file not found, please make sure the file is saved under name 'scoping_manual_reviewed.xlsx' and you have listed the contract needed in 'ContractToTake' tab." )
                 return Status.FAILED
             return Status.SUCCESS
         
