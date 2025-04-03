@@ -884,8 +884,10 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
         ERP_linked = contract_organization_df['ERP Vendor Number'] != ''
         contract_inscope_ccx = contract_organization_df[(manufacturer_to_look | vendor_to_look) & 
                                                         ERP_linked]['Contract Number'].tolist()
+        contract_inscope_ccx_not_linked = list(set(contract_organization_df[(manufacturer_to_look | vendor_to_look) &
+                                                                  ~ERP_linked]['Contract Number'].tolist()))
         
-        all_contracts_to_look = sorted(list(set(contract_inscope_ccx + scoping_reviewed)))
+        all_contracts_to_look = sorted(list(set(contract_inscope_ccx + scoping_reviewed + contract_inscope_ccx_not_linked)))
         if all_contracts_to_look == []:
             self.no_ccx_contract_inscope = True
             print("No contract found for subsequent duplication search.")
@@ -1066,7 +1068,7 @@ This will take a while.""".replace("\n", ""))
         
         if len(dup_found) == 0:
             print("no duplication found in the search set. All good now.")
-            return Status.PASS
+            return Status.SUCCESS
        
         dup_found.loc[:, 'Same QOE'] = dup_found['QOE_x'] == dup_found['QOE_y']
         dup_found.loc[:, 'Same UOM'] = dup_found['UOM_x'] == dup_found['UOM_y']
