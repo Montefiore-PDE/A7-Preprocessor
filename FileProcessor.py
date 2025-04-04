@@ -153,7 +153,7 @@ class FileProcessor:
         ** note if we see input as like a decimal number 123.100, we will NOT convert it to 123.1, but retain its origianl form
         ** similarly, if input is like 089.800.988, we will NOT remove the leading/trailing zeros
         """
-        MFN = MFN.replace('-', '').strip()
+        MFN = MFN.replace('-', '').strip().upper()
         if MFN.isdigit():
             return str(int(MFN))
         return MFN
@@ -510,6 +510,11 @@ class FileProcessor:
         # compute expiration flag
         std_df.loc[:, 'ExpiredFlag'] = std_df['Expiration Date'].apply(lambda x: 'Expired' if x < self.today
                                                                        else 'Non Expired')
+        # make upper cae for all MFN, VN, UOM and Description
+        std_df.loc[:, 'UOM'] = std_df['UOM'].apply(lambda x: str(x).upper() if isinstance(x, str) else '')
+        std_df.loc[:, 'Description'] = std_df['Description'].apply(lambda x: str(x).upper() if isinstance(x, str) else '')
+        std_df.loc[:, 'MFN'] = std_df['MFN'].apply(lambda x: str(x).upper() if isinstance(x, str) else '')
+        std_df.loc[:, 'VN'] = std_df['VN'].apply(lambda x: str(x).upper() if isinstance(x, str) else '')
         # compute overall active rank (1 as active overall, 2 hit some type of deactivation flag)
         ind_active = \
         std_df[(std_df['OnHold'] == 'No') &
