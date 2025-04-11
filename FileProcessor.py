@@ -306,7 +306,7 @@ class FileProcessor:
             return Status.FAILED
         
         dfs = []
-        checker_null_value, checker_dup_value, checker_unknwon_uom, checker_EA_QOE = False, False, False, False
+        checker_null_value, checker_dup_value, checker_unknwon_uom, checker_EA_QOE, checker_invisible_chars = False, False, False, False, False
         for file in os.listdir(self.tp_file_path):
             if not file.endswith('.xlsx'):
                 print(f'ignoring {file} because it is not a .xlsx file')
@@ -429,10 +429,76 @@ class FileProcessor:
         else:
             checker_EA_QOE = True
         
+        # check for problematic Unicode characters
+        invisible_chars = ['\ufeff', '\u200b', '\u200c', '\u200d', '\u2060', '\u00a0', '\u202e', '\u202f',
+                           '\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF', '\u202E', '\u202F', '\u00A0']
+        # function to detect invisible characters
+        def has_invisible_chars(text):
+            if not isinstance(text, str):
+                return False
+            for char in invisible_chars:
+                if char in text:
+                    return True
+            return False
+        
+        # Check both columns for invisible characters
+        df_combined['MFN_Has_Invisible'] = df_combined['Mfg Part Num'].apply(has_invisible_chars)
+        df_combined['VN_Has_Invisible'] = df_combined['Vendor Part Num'].apply(has_invisible_chars)
+
+        # Combined flag - True if either column has invisible characters
+        df_combined['Invisible Characters'] = df_combined['MFN_Has_Invisible'] | df_combined['VN_Has_Invisible']
+        invisible_chars = df_combined[df_combined['Invisible Characters'] == True]
+        invisible_chars_index = invisible_chars.index
+        if len(invisible_chars_index) > 0:
+            print("See below for items with invisible characters, please confirm and try again")
+            print(invisible_chars_index[cols_to_display])
+            checker_invisible_chars = False
+            
+            # Print out the hex values of the invisible characters
+            print("\nDetailed view of strings with invisible characters:")
+            for _, row in invisible_chars_index.iterrows():
+                if row['MFN_Has_Invisible']:
+                    mfn = row['Mfg Part Num']
+                    print(f"MFN: {mfn} => {repr(mfn)}")
+                if row['VN_Has_Invisible']:
+                    vn = row['Vendor Part Num']
+                    print(f"VN: {vn} => {repr(vn)}")
+                print("---")
+            
+            # Clean up the temporary columns
+            df_combined.drop(['MFN_Has_Invisible', 'VN_Has_Invisible'], axis=1, inplace=True)
+        else:
+            checker_invisible_chars = True
+            df_combined.drop(['MFN_Has_Invisible', 'VN_Has_Invisible'], axis=1, inplace=True)
+        
+        # create extra column Stripped MFN to record the invisible chars removed/replaced version of my Mfg Part Num
+        def remove_invisible_chars(text):
+            replacing_dict = {'\ufeff': '', 
+                              '\u200b': '', 
+                              '\u200c': '', 
+                              '\u200d': '', 
+                              '\u2060': '',
+                              '\u00a0': ' ',
+                              '\u202e': '',
+                              '\u202f': ' ',
+                              '\u200B': '',
+                              '\u200C': '',
+                              '\u200D': '',
+                              '\u2060': '',
+                              '\uFEFF': '',
+                              '\u202E': '',
+                              '\u202F': ' ',
+                              '\u00A0': ' '}
+            if not isinstance(text, str):
+                return text
+            for char, replacement in replacing_dict.items():
+                text = text.replace(char, replacement)
+            return text
+
 
         # output the pre_checked - deduped file
         # if all checks passsed
-        if checker_null_value and checker_dup_value and checker_unknwon_uom and checker_EA_QOE:
+        if checker_null_value and checker_dup_value and checker_unknwon_uom and checker_EA_QOE and checker_invisible_chars:
             print(f"Pre-checking {Fore.LIGHTGREEN_EX}*** PASSED ***{Style.RESET_ALL}, preparing the combined file ......")
             all_items = df_combined.drop_duplicates(subset = ['Mfg Part Num', 
                                                             'Contract Number',
@@ -466,6 +532,9 @@ class FileProcessor:
                 df_combined.loc[duplicates_index, 'Duplicate'] = 'Check duplicate'
             df_combined.loc[unknown_uom_index, 'Unknown UOM'] = 'Check UOM'
             df_combined.loc[EA_QOE_1_index, 'EA QOE not 1'] = 'Check EA QOE'
+            df_combined.loc[invisible_chars_index, 'Invisible Characters'] = 'Check invisible characters'
+            df_combined.loc[invisible_chars_index, 'Stripped MFN'] = df_combined.loc[invisible_chars_index, 'Mfg Part Num'].apply(remove_invisible_chars)
+            df_combined.loc[invisible_chars_index, 'Stripped VN'] = df_combined.loc[invisible_chars_index, 'Vendor Part Num'].apply(remove_invisible_chars)
             df_combined.to_excel(os.path.join(self.temp_file_path, 
                                 f'failed_prechecking_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx'), 
                                 index = False)
