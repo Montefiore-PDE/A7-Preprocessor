@@ -451,18 +451,14 @@ class FileProcessor:
         invisible_chars_index = invisible_chars.index
         if len(invisible_chars_index) > 0:
             print("See below for items with invisible characters, please confirm and try again")
-            print(invisible_chars_index[cols_to_display])
+            print(invisible_chars[cols_to_display])
             checker_invisible_chars = False
             
             # Print out the hex values of the invisible characters
             print("\nDetailed view of strings with invisible characters:")
-            for _, row in invisible_chars_index.iterrows():
-                if row['MFN_Has_Invisible']:
-                    mfn = row['Mfg Part Num']
-                    print(f"MFN: {mfn} => {repr(mfn)}")
-                if row['VN_Has_Invisible']:
-                    vn = row['Vendor Part Num']
-                    print(f"VN: {vn} => {repr(vn)}")
+            for row in invisible_chars.values:
+                print(f"MFN: {row[0]} => {repr(row[0])}")
+                print(f"VN: {row[1]} => {repr(row[1])}")
                 print("---")
             
             # Clean up the temporary columns
