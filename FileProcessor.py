@@ -184,11 +184,11 @@ class FileProcessor:
             self.scoping()
         elif process_type == ProcessType.standardize_all_and_stack:
             print('Initiating standardize all and stack process .......')
-            self.set_scope(search_term = self.manufacturer)
+            self.set_scope()
             self.standardize_all_and_stack()
         elif process_type == ProcessType.dup_search_and_compare:
             print('Initializing search and compare process .......')
-            self.set_scope(search_term = self.manufacturer)
+            self.set_scope()
             self.standardize_all_and_stack()
             self.set_model()
             standard_run = 'yes'
@@ -205,18 +205,18 @@ class FileProcessor:
                                         search_set_input = search_set_input)
         elif process_type == ProcessType.itemmast_search_and_compare:
             print('Initiating itemmast search and compare process .......')
-            self.set_scope(search_term = self.manufacturer)
+            self.set_scope()
             self.standardize_all_and_stack()
             self.set_model()
             self.itemmast_search_and_compare(check_mode = self.check_mode)
         elif process_type == ProcessType.replacement_contract_pair_check:
             print('Initiating replacement contract pair check process .......')
-            self.set_scope(search_term = self.manufacturer)
+            self.set_scope()
             self.standardize_all_and_stack()
             self.replacement_contract_pair_check(check_mode = CheckMode.MFN)
         elif process_type == ProcessType.ccx_dup_search_and_itemmast_match:
             print('Initiating pre-processor reporting process .......')
-            self.set_scope(search_term = self.manufacturer)
+            self.set_scope()
             self.standardize_all_and_stack()
             self.set_model()
             self.dup_search_and_compare(check_mode = self.check_mode,
