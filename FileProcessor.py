@@ -234,7 +234,11 @@ class FileProcessor:
                 while s_pre_check == Status.FAILED: 
                     pre_check_retry = input('Exit or Retry? (E/R)')
                     if pre_check_retry.lower() in ['r', 'retry']:
-                        s_pre_check = self.pre_check(check_mode = self.check_mode)
+                        use_MFN_as_check_mode = input('Do you want to use MFN as check mode? (Y/N): ')
+                        if use_MFN_as_check_mode.lower() in ['y', 'yes']:
+                            s_pre_check = self.pre_check(check_mode = CheckMode.MFN) # temporarily set to MFN 
+                        else:
+                            s_pre_check = self.pre_check(check_mode = self.check_mode)
                     else:
                         input("Press any key to exit ...")
                         return None
