@@ -235,10 +235,15 @@ class FileProcessor:
                     pre_check_retry = input('Exit or Retry? (E/R)')
                     if pre_check_retry.lower() in ['r', 'retry']:
                         use_MFN_as_check_mode = input('Do you want to use MFN as check mode? (Y/N): ')
+                        pardon_vn_empty = input('Do you want to pardon vendor part number empty check? (Y/N): ')
                         if use_MFN_as_check_mode.lower() in ['y', 'yes']:
-                            s_pre_check = self.pre_check(check_mode = CheckMode.MFN) # temporarily set to MFN 
+                            if pardon_vn_empty.lower() in ['y', 'yes']:
+                                s_pre_check = self.pre_check(check_mode = CheckMode.MFN, pardon_vn = True)
+                            else:
+                                s_pre_check = self.pre_check(check_mode = CheckMode.MFN) # temporarily set to MFN and it should allow it to pass
                         else:
                             s_pre_check = self.pre_check(check_mode = self.check_mode)
+                        print(s_pre_check)
                     else:
                         input("Press any key to exit ...")
                         return None
@@ -292,7 +297,8 @@ class FileProcessor:
         return None
     
     
-    def pre_check(self, check_mode:CheckMode = CheckMode.MFN_RF):
+    def pre_check(self, check_mode:CheckMode = CheckMode.MFN_RF,
+                  pardon_vn: bool = False):
         """
         Perform pre-check operations on all files for a folder, usualy for the 'to_process' folder.
         We will check for the following:
@@ -300,6 +306,7 @@ class FileProcessor:
         - File extention (only .xlsx files will be processed)
         - File follows a specific template and have all necessary columns
         - Does the imported file(s) contains duplicated items (by manufacturer part number or manufacturer part number reduced)
+        - Sometimes the missing field from vendor part number can be pardoned, set pardon_vn = True bypass the checking
         """
         print(f'reading input files from {self.tp_file_path}')
         if not os.path.exists(self.tp_file_path):
@@ -356,6 +363,10 @@ class FileProcessor:
             df_combined.loc[:, col] = df_combined[col].apply(lambda x: np.nan 
                                                             if (str(x).strip() == '' or pd.isnull(x)) 
                                                             else x)
+            if pardon_vn and col == 'Vendor Part Num':
+                # warning to the user say we are not checking for vendor part number, warning in red color in console
+                print(f"{Fore.LIGHTRED_EX}!!!Attention!!! Vendor Part Number are pardoned for missing value checking, you can proceed with preprocessing but anything without vendor part number will not be entered to INFOR.{Style.RESET_ALL}")
+                df_combined.loc[:, col] = df_combined[col].apply(lambda x: '' if (str(x).strip() == '' or pd.isnull(x)) else x)
         for col in ['Effective Date', 'Expiration Date']:
             df_combined.loc[:, col] = pd.to_datetime(df_combined[col], errors = 'coerce')
         df_combined.loc[:, 'Contract Price'] = df_combined['Contract Price'].apply(lambda x: np.nan
@@ -382,7 +393,6 @@ class FileProcessor:
             checker_null_value = True
 
         # check for duplications
-        check_mode = self.check_mode
         df_combined.loc[:, 'dup count (by MFN RF)'] = df_combined.groupby(['MFN RF'])['seq'].transform('count')
         df_combined.loc[:, 'dup count (by MFN)'] = df_combined.groupby(['Mfg Part Num'])['seq'].transform('count')
         df_combined.sort_values(by = ['dup count (by MFN RF)', 
@@ -402,6 +412,7 @@ class FileProcessor:
             else:
                 checker_dup_value = True
         elif check_mode == CheckMode.MFN:
+            print("check_mode is set to MFN")
             duplicates = df_combined[df_combined['dup count (by MFN)'] > 1]
             duplicates_index = duplicates.index
             if len(duplicates) > 0:
