@@ -1,8 +1,19 @@
-import pip_system_certs.wrapt_requests
 from FileProcessor import FileProcessor
 from FolderManager import FolderManager
 from TypesDefinition import CheckMode, ProcessType
-import pip_system_certs #dummy import to ensure the package is installed
+# import pip_system_certs #dummy import to ensure the package is installed
+
+try:
+    import pip_system_certs.wrapt_requests
+except ImportError:
+    import os
+    import ssl
+    # Set up SSL context manually if the module fails to import
+    ssl_context = ssl.create_default_context()
+    ssl_context.load_default_certs()
+    # Make this the default context
+    ssl._create_default_https_context = lambda: ssl_context
+    print("Using system certificates directly via SSL context")
 
 if __name__ == '__main__':
     print("Initiating .......")
