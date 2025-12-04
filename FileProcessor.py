@@ -178,7 +178,25 @@ class FileProcessor:
                       ):
         if process_type == ProcessType.pre_check:
             print('Initiating pre-check process .......')
-            self.pre_check(check_mode = self.check_mode)
+            s_pre_check = self.pre_check(check_mode = self.check_mode)
+            if s_pre_check == Status.FAILED:
+                retry = input('Exit or Retry? (E/R)')
+                if retry.lower() in ['r', 'retry']:
+                    use_MFN_as_check_mode = input('Do you want to use MFN as check mode? (Y/N): ')
+                    pardon_vn_empty = input('Do you want to pardon vendor part number empty check? (Y/N): ')
+                    pardon_UOM_gt1 = input('Have you confirmed all UOM (CA/CS/BX/PK) with QOE = 1 are correct? (Y/N): ')
+                    pardon_vn, pardon_UOM = False, False
+                    if pardon_vn_empty.lower() in ['y', 'yes']:
+                        pardon_vn = True
+                    if pardon_UOM_gt1.lower() in ['y', 'yes']:
+                        pardon_UOM = True
+                    if use_MFN_as_check_mode.lower() in ['y', 'yes']:
+                        s_pre_check = self.pre_check(check_mode = CheckMode.MFN, pardon_vn = pardon_vn, pardon_UOM = pardon_UOM)
+                    else:
+                        s_pre_check = self.pre_check(check_mode = self.check_mode, pardon_vn = pardon_vn, pardon_UOM = pardon_UOM)
+                else:
+                    input("Press any key to exit ...")
+                    return None                
         elif process_type == ProcessType.scoping:
             print('Initiating scoping process .......')
             self.scoping()
@@ -236,13 +254,16 @@ class FileProcessor:
                     if pre_check_retry.lower() in ['r', 'retry']:
                         use_MFN_as_check_mode = input('Do you want to use MFN as check mode? (Y/N): ')
                         pardon_vn_empty = input('Do you want to pardon vendor part number empty check? (Y/N): ')
+                        pardon_UOM_gt1 = input('Have you confirmed all UOM (CA/CS/BX/PK) with QOE = 1 are correct? (Y/N): ')
+                        pardon_vn, pardon_UOM = False, False
+                        if pardon_vn_empty.lower() in ['y', 'yes']:
+                            pardon_vn = True
+                        if pardon_UOM_gt1.lower() in ['y', 'yes']:
+                            pardon_UOM = True
                         if use_MFN_as_check_mode.lower() in ['y', 'yes']:
-                            if pardon_vn_empty.lower() in ['y', 'yes']:
-                                s_pre_check = self.pre_check(check_mode = CheckMode.MFN, pardon_vn = True)
-                            else:
-                                s_pre_check = self.pre_check(check_mode = CheckMode.MFN) # temporarily set to MFN and it should allow it to pass
+                            s_pre_check = self.pre_check(check_mode = CheckMode.MFN, pardon_vn = pardon_vn, pardon_UOM = pardon_UOM) # temporarily set to MFN and it should allow it to pass
                         else:
-                            s_pre_check = self.pre_check(check_mode = self.check_mode)
+                            s_pre_check = self.pre_check(check_mode = self.check_mode, pardon_vn = pardon_vn, pardon_UOM = pardon_UOM)
                         print(s_pre_check)
                     else:
                         input("Press any key to exit ...")
@@ -298,7 +319,8 @@ class FileProcessor:
     
     
     def pre_check(self, check_mode:CheckMode = CheckMode.MFN_RF,
-                  pardon_vn: bool = False):
+                  pardon_vn: bool = False,
+                  pardon_UOM: bool = False):
         """
         Perform pre-check operations on all files for a folder, usualy for the 'to_process' folder.
         We will check for the following:
@@ -307,6 +329,7 @@ class FileProcessor:
         - File follows a specific template and have all necessary columns
         - Does the imported file(s) contains duplicated items (by manufacturer part number or manufacturer part number reduced)
         - Sometimes the missing field from vendor part number can be pardoned, set pardon_vn = True bypass the checking
+        - added the check to ask user to proactively validate if all UOM (CA/CS/BX/PK) with QOE = 1 are correct, if user confirmed, set pardon_UOM = True to bypass the checking
         """
         print(f'reading input files from {self.tp_file_path}')
         if not os.path.exists(self.tp_file_path):
@@ -317,7 +340,7 @@ class FileProcessor:
             return Status.FAILED
         
         dfs = []
-        checker_null_value, checker_dup_value, checker_unknwon_uom, checker_EA_QOE, checker_invisible_chars = False, False, False, False, False
+        checker_null_value, checker_dup_value, checker_unknwon_uom, checker_EA_QOE, checker_invisible_chars, checker_UOM_QOE = False, False, False, False, False, False
         for file in os.listdir(self.tp_file_path):
             if not file.endswith('.xlsx'):
                 print(f'ignoring {file} because it is not a .xlsx file')
@@ -374,6 +397,7 @@ class FileProcessor:
                                                                                    else float(x.replace('$', '').replace(',','')))
         df_combined.loc[:, 'UOM STD'] = df_combined['UOM'].apply(lambda x: np.nan if (x == '' or pd.isnull(x))
                                                              else self.UOM_helper(x))
+        df_combined.loc[:, 'QOE'] = df_combined['QOE'].apply(lambda x: str(int(x.strip())) if x.strip() != '' else 0)
         df_combined.loc[:, 'Buyer Part Num'] = df_combined['Buyer Part Num'].fillna('').str.strip()
         df_combined.loc[:, 'seq'] = df_combined.groupby(['Contract Number']).cumcount('Contract Number') + 1
         
@@ -443,6 +467,21 @@ class FileProcessor:
             checker_EA_QOE = False 
         else:
             checker_EA_QOE = True
+
+        # check for UOM (CA, CS, BX, PK) and its respective QOE is greater than 1
+        # by pass the check if pardon_UOM = True
+        if pardon_UOM:
+            checker_UOM_QOE = True
+            print(f"{Fore.LIGHTRED_EX}!!!Attention!!! UOM (CA/CS/BX/PK) with QOE = 1 are recognized as manually verified, you can proceed with preprocessing if you are sure those are truely 1CA/1EA, 1BX/1EA, or 1PK/1EA.{Style.RESET_ALL}")
+        else:
+            UOM_QOE_gt1 = df_combined[(df_combined['UOM STD'].isin(['CA', 'CS', 'BX', 'PK'])) & (df_combined['QOE'] == '1')]
+            UOM_QOE_gt1_index = UOM_QOE_gt1.index
+            if len(UOM_QOE_gt1) > 0:
+                print("see below for items with UOM CA/CS/BX/PK but QOE equal to 1, please confirm and try again")
+                print(UOM_QOE_gt1[cols_to_display])
+                checker_UOM_QOE = False
+            else:
+                checker_UOM_QOE = True
         
         # check for problematic Unicode characters
         invisible_chars = ['\ufeff', '\u200b', '\u200c', '\u200d', '\u2060', '\u00a0', '\u202e', '\u202f',
@@ -509,7 +548,7 @@ class FileProcessor:
 
         # output the pre_checked - deduped file
         # if all checks passsed
-        if checker_null_value and checker_dup_value and checker_unknwon_uom and checker_EA_QOE and checker_invisible_chars:
+        if checker_null_value and checker_dup_value and checker_unknwon_uom and checker_EA_QOE and checker_invisible_chars and checker_UOM_QOE:
             print(f"Pre-checking {Fore.LIGHTGREEN_EX}*** PASSED ***{Style.RESET_ALL}, preparing the combined file ......")
             all_items = df_combined.drop_duplicates(subset = ['Mfg Part Num', 
                                                             'Contract Number',
@@ -543,6 +582,7 @@ class FileProcessor:
                 df_combined.loc[duplicates_index, 'Duplicate'] = 'Check duplicate'
             df_combined.loc[unknown_uom_index, 'Unknown UOM'] = 'Check UOM'
             df_combined.loc[EA_QOE_1_index, 'EA QOE not 1'] = 'Check EA QOE'
+            df_combined.loc[UOM_QOE_gt1_index, 'CA/CS/BX/PK QOE is 1'] = 'Check CA/CS/BX/PK QOE'
             df_combined.loc[invisible_chars_index, 'Invisible Characters'] = 'Check invisible characters'
             df_combined.loc[invisible_chars_index, 'Stripped MFN'] = df_combined.loc[invisible_chars_index, 'Mfg Part Num'].apply(remove_invisible_chars)
             df_combined.loc[invisible_chars_index, 'Stripped VN'] = df_combined.loc[invisible_chars_index, 'Vendor Part Num'].apply(remove_invisible_chars)

@@ -92,6 +92,7 @@ class ReportFurnishing:
                                    'replace': ['Contract Number',
                                                'Mfg Part Num',
                                                'Vendor Part Num',
+                                               'Buyer Part Num',
                                                'Description',
                                                'Contract Price',
                                                'UOM',
@@ -198,7 +199,7 @@ class ReportFurnishing:
         
         return "Itemmast report generated."
     
-    def make_replace_report(self,
+    def make_replacement_report(self,
                             df: pd.DataFrame,
                             sheet_name: str = "NoReplacement"):
         file_name = f"replacement_leftover_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx"
