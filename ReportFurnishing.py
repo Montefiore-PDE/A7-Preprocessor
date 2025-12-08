@@ -14,10 +14,12 @@ class ReportFurnishing:
         self.output_file_path = folder_manager.get_folder_path('output')
         self.datesig = self.datesig = datetime.today().strftime('%Y%m%d')
         self.color_pane = {'light_blue': '#D7ECFF',
-                           'yellow': '#FFD500',
-                           'grey': '#808080',
-                           'pink': '#FFC0CB',
-                           'white': '#FFFFFF'}
+                   'yellow': '#FFD500',
+                   'grey': '#808080',
+                   'pink': '#FFC0CB',
+                   'white': '#FFFFFF',
+                   'green': '#C6E0B4',
+                   'gold': '#DAA520'}
         self.header_format_ccx = {'bold': True,
                                   'text_wrap': True,
                                   'valign': 'vcenter',
@@ -201,9 +203,64 @@ class ReportFurnishing:
     
     def make_replacement_report(self,
                             df: pd.DataFrame,
-                            sheet_name: str = "NoReplacement"):
-        file_name = f"replacement_leftover_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx"
+                            df2: pd.DataFrame,
+                            sheet_name: str = "NoReplacement",
+                            sheet_name2: str = "Comparison"):
+        file_name = f"replacement_comparison_{self.manufacturer}_{self.contract}_{self.datesig}.xlsx"
         df.columns = self.report_header_dict['replace']
+        comparison_columns = ['MFN',
+                              'Contract Number_TP',
+                              'VN_TP',
+                              'IN_TP',
+                              'Description_TP',
+                              'UnitCost_TP',
+                              'UOM_TP',
+                              'QOE_TP',
+                              'Effective Date_TP',
+                              'Expiration Date_TP',
+                              'FileName_TP',
+                              'seq_TP',
+                              'Contract Number_CCX',
+                              'VN_CCX',
+                              'IN_CCX',
+                              'Description_CCX',
+                              'UnitCost_CCX',
+                              'UOM_CCX',
+                              'QOE_CCX',
+                              'Effective Date_CCX',
+                              'Expiration Date_CCX',
+                              'FileName_CCX',
+                              'seq_CCX',
+                              '_merge']
+        missing_columns = [col for col in comparison_columns if col not in df2.columns]
+        if missing_columns:
+            raise KeyError(f"Missing expected comparison columns: {missing_columns}")
+        rename_map = {'MFN': 'Manufacturer Part Num',
+                      'Contract Number_TP': 'Contract Number (TP)',
+                      'VN_TP': 'Vendor Part Num (TP)',
+                      'IN_TP': 'Buyer Part Num (TP)',
+                      'Description_TP': 'Description (TP)',
+                      'UnitCost_TP': 'Unit Cost (TP)',
+                      'UOM_TP': 'UOM (TP)',
+                      'QOE_TP': 'QOE (TP)',
+                      'Effective Date_TP': 'Effective Date (TP)',
+                      'Expiration Date_TP': 'Expiration Date (TP)',
+                      'FileName_TP': 'FileName (TP)',
+                      'seq_TP': 'seq (TP)',
+                      'Contract Number_CCX': 'Contract Number (CCX)',
+                      'VN_CCX': 'Vendor Part Num (CCX)',
+                      'IN_CCX': 'Buyer Part Num (CCX)',
+                      'Description_CCX': 'Description (CCX)',
+                      'UnitCost_CCX': 'Unit Cost (CCX)',
+                      'UOM_CCX': 'UOM (CCX)',
+                      'QOE_CCX': 'QOE (CCX)',
+                      'Effective Date_CCX': 'Effective Date (CCX)',
+                      'Expiration Date_CCX': 'Expiration Date (CCX)',
+                      'FileName_CCX': 'FileName (CCX)',
+                      'seq_CCX': 'seq (CCX)'}
+        df2_formatted = df2[comparison_columns].copy()
+        df2_formatted.rename(columns=rename_map, inplace=True)
+        
         with pd.ExcelWriter(os.path.join(self.output_file_path, file_name), engine='xlsxwriter') as writer:
             df.to_excel(writer, sheet_name=sheet_name, index=False)
             workbook = writer.book
@@ -211,6 +268,10 @@ class ReportFurnishing:
 
             header_format_ccx = workbook.add_format(self.header_format_ccx)
             header_format_clear = workbook.add_format(self.header_format_clear)
+            header_format_green = workbook.add_format({**self.header_format_clear,
+                                                       'fg_color': self.color_pane['green']})
+            header_format_gold = workbook.add_format({**self.header_format_clear,
+                                                      'fg_color': self.color_pane['gold']})
 
             header_styles = {}
             for col in range(0, 10):
@@ -227,4 +288,17 @@ class ReportFurnishing:
                                                                           'value': '"Immast"',
                                                                           'format': cell_format_warning})
             worksheet.autofilter(0, 0, df.shape[0], df.shape[1]-1)
+
+            df2_formatted.to_excel(writer, sheet_name=sheet_name2, index=False)
+            worksheet_comparison = writer.sheets[sheet_name2]
+
+            for col_num, column_name in enumerate(df2_formatted.columns):
+                if column_name.endswith('(TP)'):
+                    worksheet_comparison.write(0, col_num, column_name, header_format_green)
+                elif column_name.endswith('(CCX)'):
+                    worksheet_comparison.write(0, col_num, column_name, header_format_gold)
+                else:
+                    worksheet_comparison.write(0, col_num, column_name, header_format_clear)
+
+            worksheet_comparison.autofilter(0, 0, df2_formatted.shape[0], df2_formatted.shape[1]-1)
         return "Replacement leftover report generated."

@@ -1380,7 +1380,8 @@ reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'
                                         check_mode: CheckMode = CheckMode.MFN_RF):
         """compare two contracts: TP - new, replacement ccx - old contract to be replaced to identify
         1. items only lives on old contract
-        2. items only lives on old contract and marked as itemmast on Infor (if none, type in 'nan')"""
+        2. items only lives on old contract and marked as itemmast on Infor (if none, type in 'nan')
+        3. items joined with tp and replacement contract to identify the overlaps, the left and the right"""
         replaced_contract = input("please enter the replacement contract number: ")
         replaced_contract = replaced_contract.strip().upper()
         replacement_ccx_df = self.stacked_std[(self.stacked_std['Source System'] == 'CCX') & 
@@ -1405,6 +1406,7 @@ reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'
         if len(replaced_leftover) == 0:
             print("full coverage using replacement contract, no leftover items found.")
             return Status.SUCCESS
+        
         replacement_leftover_df = replacement_ccx_df[replacement_cols_to_take].copy()
         replacement_leftover_df = replacement_leftover_df[replacement_leftover_df[check_mode].isin(replaced_leftover)].copy()
         replacement_leftover_df.loc[:, 'On Replacement Contract'] = 'No'
@@ -1415,16 +1417,26 @@ reviewed file to {Fore.LIGHTGREEN_EX}'dup_search_reviewed.xlsx{Style.RESET_ALL}'
         else:
             replacement_leftover_df.loc[:, 'ItemType'] = 'Special'
 
+        # another dataframe to show the joined result of tp and replacement contract
+        tp_replacement_joined = tp_df.merge(replacement_ccx_df, on = [check_mode], how = 'outer', suffixes = ('_TP', '_CCX'),
+                                            indicator = True)
+        overlap_count = len(tp_replacement_joined[tp_replacement_joined['_merge'] == 'both'])
+
         if len(replacement_leftover_df) == 0:
             print("full coverage using replacement contract, no leftover items found.")
+            return Status.SUCCESS
+        if overlap_count == 0:
+            print("no overlap items found between the new contract (TP file) and the compared CCX contract (replacement).")
             return Status.SUCCESS
         else:
             replacement_leftover_df.sort_values(by = ['ItemType'], ascending = [True], inplace = True)
             report_to_write = ReportFurnishing(self.folder_manager)
-            report_to_write.make_replacement_report(replacement_leftover_df)
+            report_to_write.make_replacement_report(replacement_leftover_df, tp_replacement_joined)
             print(f"replacement contract pair check completed, results are saved to output folder.")
+        
         return Status.SUCCESS
-    
+
+
     def make_ccx_upload_file(self):
         print('make_ccx_upload_file')
         return None
