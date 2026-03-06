@@ -342,12 +342,19 @@ class FileProcessor:
         dfs = []
         checker_null_value, checker_dup_value, checker_unknwon_uom, checker_EA_QOE, checker_invisible_chars, checker_UOM_QOE = False, False, False, False, False, False
         for file in os.listdir(self.tp_file_path):
-            if not file.endswith('.xlsx'):
-                print(f'ignoring {file} because it is not a .xlsx file')
+            if not (file.endswith('.xlsx') or file.endswith('.csv')):
+                print(f'ignoring {file} because it is not a .xlsx or .csv file')
                 continue
             file_path = os.path.join(self.tp_file_path, file)
             try:
-                df_all = pd.read_excel(file_path, sheet_name = None, dtype = str)
+                df_all = None
+                if file.endswith('.xlsx'):
+                    df_all = pd.read_excel(file_path, sheet_name = None, dtype = str)
+                elif file.endswith('.csv'):
+                    df_all = {'Sheet1': pd.read_csv(file_path, dtype = str)}
+                if df_all is None:
+                    print(f'ignoring {file} because it is not a .xlsx or .csv file')
+                    continue
             except PermissionError as e:
                 print(f'error: {file} is open, please close and try again.')
                 return Status.FAILED
@@ -745,13 +752,18 @@ class FileProcessor:
                 print(f"Folder '{file_path}' does not exist, please check the folder path")
                 return Status.FAILED
             for file in os.listdir(file_path):
-                if not file.endswith('.xlsx'):
-                    print(f'ignoring {file} because it is not a .xlsx file')
+                if not (file.endswith('.xlsx') or file.endswith('.csv')):
+                    print(f'ignoring {file} because it is not a .xlsx or a .csv file')
                     continue
                 try:
-                    ccx_df = pd.read_excel(os.path.join(file_path, file), dtype = str)
-                    ccx_df.loc[:, 'ContractLine'] = [str(i+1) for i in range(len(ccx_df))]
-                    ccx_dfs.append(ccx_df)
+                    if file.endswith('.xlsx'):
+                        ccx_df = pd.read_excel(os.path.join(file_path, file), dtype = str)
+                        ccx_df.loc[:, 'ContractLine'] = [str(i+1) for i in range(len(ccx_df))]
+                        ccx_dfs.append(ccx_df)
+                    elif file.endswith('.csv'):
+                        ccx_df = pd.read_csv(os.path.join(file_path, file), dtype = str)
+                        ccx_df.loc[:, 'ContractLine'] = [str(i+1) for i in range(len(ccx_df))]
+                        ccx_dfs.append(ccx_df)
                 except FileNotFoundError as e:
                     print(f"File '{file}' does not exist, check CCX contract download and try again")
                     return Status.FAILED
@@ -1045,7 +1057,7 @@ to {Fore.LIGHTGREEN_EX}'scoping_manual_reviewed.xlsx'{Style.RESET_ALL}""".replac
         ccx_files_on_disk = []
         ccx_file_stale = []
         for file in os.listdir(self.ccx_file_path):
-            if file.endswith('.xlsx'):
+            if file.endswith('.xlsx') or file.endswith('.csv'):
                 ccx_files_on_disk.append(file.split('.')[0].upper())
                 if not FileProcessor.isFileFresh(os.path.join(self.ccx_file_path, file), days = 1):
                     ccx_file_stale.append(file.split('.')[0].upper())
